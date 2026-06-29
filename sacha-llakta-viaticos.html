@@ -1247,6 +1247,51 @@ function generatePDF(autoSave=false, tripData=null){
   doc.text('$'+balance.toFixed(2),cols.bal,y+7,{align:'right'});
   y+=20;
 
+  // ─── RECEIPTS SECTION ───
+  const gastosConRecibo=rows.filter(g=>g.receipt);
+  if(gastosConRecibo.length>0){
+    doc.addPage();
+    y=20;
+    // Section header
+    doc.setFillColor(15,22,40);doc.rect(0,0,W,14,'F');
+    doc.setTextColor(232,160,32);doc.setFontSize(12);doc.setFont('helvetica','bold');
+    doc.text(lang==='es'?'COMPROBANTES Y RECIBOS':'RECEIPTS & VOUCHERS',W/2,10,{align:'center'});
+    y=24;
+
+    gastosConRecibo.forEach((g,i)=>{
+      const cat=trip.categories.find(c=>c.id===g.cat)||{name:'Otro',nameEn:'Other'};
+      const catLabel=(lang==='es'?cat.name:cat.nameEn||cat.name).replace(/[^\x00-\x7F]/g,'').trim()||cat.name;
+
+      // Receipt card header
+      if(y>230){doc.addPage();y=20;}
+      doc.setFillColor(17,26,44);doc.roundedRect(M,y,CW,10,2,2,'F');
+      doc.setTextColor(232,160,32);doc.setFontSize(8);doc.setFont('helvetica','bold');
+      doc.text('#'+(i+1)+' · '+catLabel+' · '+g.desc.slice(0,35),M+4,y+7);
+      doc.setTextColor(255,100,100);
+      doc.text('-$'+g.monto.toFixed(2),M+CW-4,y+7,{align:'right'});
+      y+=12;
+
+      // Receipt image
+      try{
+        const imgW=CW;
+        const imgH=70;
+        if(y+imgH>280){doc.addPage();y=20;}
+        doc.addImage(g.receipt,'JPEG',M,y,imgW,imgH,'','MEDIUM');
+        y+=imgH+6;
+      } catch(e){
+        doc.setTextColor(100,120,150);doc.setFontSize(8);doc.setFont('helvetica','italic');
+        doc.text(lang==='es'?'[Imagen no disponible]':'[Image not available]',M+4,y+6);
+        y+=12;
+      }
+
+      // Divider between receipts
+      if(i<gastosConRecibo.length-1){
+        doc.setDrawColor(30,45,65);doc.setLineWidth(.3);doc.line(M,y,M+CW,y);
+        y+=6;
+      }
+    });
+  }
+
   // ─── SIGNATURES ───
   if(y>240) doc.addPage(),y=25;
   doc.setDrawColor(50,65,90);doc.setLineWidth(.5);
