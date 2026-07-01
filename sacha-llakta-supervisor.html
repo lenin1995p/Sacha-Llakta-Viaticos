@@ -189,6 +189,8 @@ body{padding-bottom:80px}
 </style>
 </head>
 <body>
+<input type="file" id="supervisor-receipt-input" accept="image/*" capture="environment" style="display:none" onchange="handleReceiptFileSelected(this)">
+
 
 <!-- ════ LOGIN SCREEN ════ -->
 <div id="login-screen" class="login-wrap">
@@ -367,9 +369,9 @@ window.dispatchEvent(new Event('firebase-ready'));
 //     Mientras estén vacíos, el botón mostrará "próximamente".
 // ═══════════════════════════════════════════════════════
 const STRIPE_LINKS = {
-  basic: "https://buy.stripe.com/test_6oU9ATaNebB5do72VJ6c000",   // Plan Básico ($9.99/mes) - SANDBOX
-  pro:   "",   // 👉 pega aquí el Payment Link del plan Pro ($24.99/mes)
-  enterprise: "" // 👉 pega aquí el Payment Link del plan Empresa ($59.99/mes)
+  basic: "https://buy.stripe.com/dRmbJ0fMF5Jwfqna8cgw000",       // Plan Básico ($9.99/mes) - LIVE
+  pro:   "https://buy.stripe.com/eVq28q2ZTdbY2DBa8cgw001",       // Plan Pro ($24.99/mes) - LIVE
+  enterprise: "https://buy.stripe.com/8x2cN443X9ZM0vt6W0gw002"   // Plan Empresa ($59.99/mes) - LIVE
 };
 
 const TRIAL_DAYS = 14;
@@ -1038,7 +1040,7 @@ function renderReports(){
             <div class="feed-right">
               <div class="feed-amount">-$${(ex.monto||0).toFixed(2)}</div>
               <div style="display:flex;gap:6px;margin-top:4px">
-                ${ex.receipt?`<button class="feed-receipt-btn" onclick="viewReceipt('${ex.id}')">📷</button>`:''}
+                ${ex.receipt?`<button class="feed-receipt-btn" onclick="viewReceipt('${ex.id}')">📷</button>`:`<button class="feed-receipt-btn" style="color:var(--rhino);border-color:rgba(212,165,74,.35)" onclick="triggerAddReceipt('${ex.id}')">📎 ${es?'Recibo':'Receipt'}</button>`}
                 <button class="feed-receipt-btn" style="color:var(--red);border-color:rgba(239,68,68,.3)" onclick="confirmDeleteExpense('${ex.id}')">🗑️</button>
               </div>
             </div>
@@ -1423,6 +1425,57 @@ async function confirmSupervisorEnd(id){
 }
 
 // ═══ VIEW RECEIPT ═══
+// Compress an image before storing it (same approach as the employee app).
+function compressImage(dataUrl, maxW=900, quality=0.55){
+  return new Promise((resolve)=>{
+    try{
+      const img=new Image();
+      img.onload=()=>{
+        let w=img.width,h=img.height;
+        if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+        const canvas=document.createElement('canvas');
+        canvas.width=w;canvas.height=h;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,0,0,w,h);
+        let out=canvas.toDataURL('image/jpeg',quality);
+        if(out.length>720000){ out=canvas.toDataURL('image/jpeg',0.4); }
+        resolve(out);
+      };
+      img.onerror=()=>resolve(dataUrl);
+      img.src=dataUrl;
+    }catch(e){resolve(dataUrl);}
+  });
+}
+
+// Supervisor/super-admin can attach or replace a receipt photo on ANY expense,
+// whether the trip is active or already finished — covers forgotten uploads and
+// physical receipts turned in at the office.
+let pendingReceiptExpId=null;
+function triggerAddReceipt(expId){
+  pendingReceiptExpId=expId;
+  document.getElementById('supervisor-receipt-input').click();
+}
+async function handleReceiptFileSelected(input){
+  const file=input.files&&input.files[0];
+  const expId=pendingReceiptExpId;
+  input.value='';
+  if(!file||!expId) return;
+  const es=lang==='es';
+  const reader=new FileReader();
+  reader.onload=async()=>{
+    try{
+      const compressed=await compressImage(reader.result);
+      await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'expenses',expId),{receipt:compressed});
+      const ex=allExpenses.find(e=>e.id===expId);
+      if(ex) ex.receipt=compressed;
+      renderReports();
+      showToast(es?'✓ Recibo agregado':'✓ Receipt added');
+    }catch(e){ showToast('Error: '+e.message); }
+  };
+  reader.onerror=()=>showToast(es?'No se pudo leer la imagen.':'Could not read the image.');
+  reader.readAsDataURL(file);
+}
+
 function viewReceipt(expId){
   const ex=allExpenses.find(e=>e.id===expId);
   if(!ex||!ex.receipt)return;
@@ -1436,7 +1489,8 @@ function viewReceipt(expId){
       <div style="font-weight:700;margin-top:2px">${esc(ex.desc)}</div>
       <div style="color:var(--red);font-weight:800;font-size:18px;margin-top:4px">-$${(ex.monto||0).toFixed(2)}</div>
     </div>
-    <button class="btn btn-ghost" style="margin-top:16px" onclick="closeModal()">${lang==='es'?'Cerrar':'Close'}</button>`;
+    <button class="btn btn-ghost" style="margin-top:16px" onclick="closeModal()">${lang==='es'?'Cerrar':'Close'}</button>
+    <button class="btn btn-ghost" style="margin-top:8px" onclick="closeModal();triggerAddReceipt('${expId}')">📎 ${lang==='es'?'Cambiar recibo':'Change receipt'}</button>`;
   showModal(html);
 }
 
@@ -2274,6 +2328,7 @@ window.doJoin=doJoin;window.generateCompanyCodeNow=generateCompanyCodeNow;
 window.confirmRemoveSupervisor=confirmRemoveSupervisor;window.removeSupervisor=removeSupervisor;
 window.switchTab=switchTab;window.toggleLang=toggleLang;window.showAddEmployee=showAddEmployee;window.saveEmployee=saveEmployee;
 window.confirmDeleteEmployee=confirmDeleteEmployee;window.deleteEmployee=deleteEmployee;window.viewReceipt=viewReceipt;
+window.triggerAddReceipt=triggerAddReceipt;window.handleReceiptFileSelected=handleReceiptFileSelected;
 window.confirmRegenCode=confirmRegenCode;window.regenCode=regenCode;window.viewEmployeeInfo=viewEmployeeInfo;
 window.exportExcel=exportExcel;window.setFilter=setFilter;window.copyCode=copyCode;window.closeModal=closeModal;
 window.renderAccount=renderAccount;window.showPlans=showPlans;window.planComingSoon=planComingSoon;window.confirmNewCompany=confirmNewCompany;
