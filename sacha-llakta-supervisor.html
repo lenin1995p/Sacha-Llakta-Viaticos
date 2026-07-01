@@ -199,7 +199,8 @@ body{padding-bottom:80px}
     <div class="card" style="text-align:left">
       <div class="tabs">
         <button class="tab active" id="logintab-login" onclick="switchLoginTab('login')">Ingresar</button>
-        <button class="tab" id="logintab-register" onclick="switchLoginTab('register')">Crear empresa</button>
+        <button class="tab" id="logintab-register" onclick="switchLoginTab('register')">Crear</button>
+        <button class="tab" id="logintab-join" onclick="switchLoginTab('join')">Unirse</button>
       </div>
 
       <!-- LOGIN -->
@@ -242,6 +243,29 @@ body{padding-bottom:80px}
         </div>
         <button class="btn btn-green" id="btn-register" onclick="doRegister()">Crear empresa</button>
         <div id="reg-err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center;display:none"></div>
+      </div>
+
+      <!-- JOIN COMPANY -->
+      <div class="tab-panel" id="loginpanel-join">
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:12px">Únete a una empresa existente con el código que te comparte el supervisor principal. Tendrás acceso completo para gestionar empleados y viáticos (no a facturación).</div>
+        <div class="field">
+          <div class="field-label">Código de empresa</div>
+          <input class="input" id="join-code" placeholder="Ej: RHINO-CO-4821" autocomplete="off" style="text-transform:uppercase">
+        </div>
+        <div class="field">
+          <div class="field-label">Tu nombre (supervisor)</div>
+          <input class="input" id="join-name" placeholder="Ej: María López" autocomplete="off">
+        </div>
+        <div class="field">
+          <div class="field-label">Correo</div>
+          <input class="input" id="join-email" type="email" placeholder="correo@empresa.com" autocomplete="off">
+        </div>
+        <div class="field">
+          <div class="field-label">Contraseña (mín. 6 caracteres)</div>
+          <input class="input" id="join-pass" type="password" placeholder="••••••••" autocomplete="off">
+        </div>
+        <button class="btn btn-green" id="btn-join" onclick="doJoin()">Unirse a la empresa</button>
+        <div id="join-err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center;display:none"></div>
       </div>
     </div>
     <p style="font-size:11px;color:var(--dim);margin-top:10px" id="login-note">Tus datos se sincronizan de forma segura en la nube</p>
@@ -438,8 +462,14 @@ let trips=[];
 let unsubExpenses=null;
 let unsubEmployees=null;
 let unsubTrips=null;
+let unsubSupervisors=null;
+let supervisorsList=[];
 let reportFilter='all';
 let pendingShowRegister=false;
+// Multi-supervisor: 'owner' (created the company) or 'supervisor' (joined via code).
+// Members have full operational access but cannot touch plan/billing or delete the company.
+let myRole='owner';
+let myName='';
 
 // ════════════════════════════════════════
 // ADMIN + ACCESO (complementa PLANS/STRIPE_LINKS de arriba)
@@ -511,12 +541,17 @@ async function doRegister(){
   try{
     const cred=await FB.createUserWithEmailAndPassword(FB.auth,email,pass);
     const uid=cred.user.uid;
-    // Create company doc (companyId = supervisor uid)
+    // Create company doc (companyId = supervisor uid = owner)
     await FB.setDoc(FB.doc(FB.db,'companies',uid),{
       company, supervisorName:name, supervisorEmail:email, address:address||'',
       createdAt:FB.serverTimestamp(),
       plan:'trial', planStart:FB.serverTimestamp()
     });
+    // Reserve a shareable company code so other supervisors can join later
+    try{
+      const code=await reserveCompanyCode(uid,company);
+      await FB.updateDoc(FB.doc(FB.db,'companies',uid),{companyCode:code});
+    }catch(e){ /* non-fatal: code can be generated later from Account tab */ }
     // onAuthStateChanged will load context
   }catch(e){
     let msg=e.message;
@@ -524,6 +559,91 @@ async function doRegister(){
     if(e.code==='auth/invalid-email') msg=lang==='es'?'Correo inválido.':'Invalid email.';
     err.textContent=msg;err.style.display='block';
     btn.disabled=false;btn.textContent=lang==='es'?'Crear empresa':'Create company';
+  }
+}
+
+// ═══ REMOVE A TEAM SUPERVISOR (owner only) ═══
+function confirmRemoveSupervisor(uid,name){
+  const es=lang==='es';
+  if(myRole!=='owner'){ showToast(es?'Solo el supervisor principal puede hacer esto.':'Only the main supervisor can do this.'); return; }
+  showModal(`
+    <div class="modal-icon">🚫</div>
+    <div class="modal-title">${es?'¿Quitar supervisor?':'Remove supervisor?'}</div>
+    <div class="modal-body">${es?'Se revocará el acceso de':'Access will be revoked for'} <b style="color:var(--text)">${esc(name||'este supervisor')}</b>. ${es?'Podrá volver a unirse con el código si se lo compartes de nuevo. Su cuenta de correo no se elimina.':'They can rejoin with the code if you share it again. Their email account is not deleted.'}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-red" onclick="removeSupervisor('${uid}')">${es?'Quitar':'Remove'}</button>
+    </div>`);
+}
+async function removeSupervisor(uid){
+  const es=lang==='es';
+  if(myRole!=='owner'){ showToast(es?'No autorizado.':'Not allowed.'); return; }
+  try{
+    await FB.deleteDoc(FB.doc(FB.db,'supervisorLinks',uid));
+    closeModal();
+    showToast(es?'✓ Supervisor quitado':'✓ Supervisor removed');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+// Generate a company code on demand (for companies created before this feature).
+async function generateCompanyCodeNow(){
+  const es=lang==='es';
+  if(myRole!=='owner'){ showToast(es?'Solo el supervisor principal puede hacer esto.':'Only the main supervisor can do this.'); return; }
+  try{
+    const code=await reserveCompanyCode(companyId,companyData.company);
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId),{companyCode:code});
+    companyData.companyCode=code;
+    renderAccount();
+    showToast(es?'✓ Código de empresa creado':'✓ Company code created');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+// ═══ JOIN COMPANY (extra supervisor via company code) ═══
+async function doJoin(){
+  const es=lang==='es';
+  const code=(document.getElementById('join-code').value||'').trim().toUpperCase();
+  const name=document.getElementById('join-name').value.trim();
+  const email=document.getElementById('join-email').value.trim();
+  const pass=document.getElementById('join-pass').value;
+  const err=document.getElementById('join-err');
+  err.style.display='none';
+  if(!code||!name||!email||!pass){err.textContent=es?'Completa todos los campos.':'Fill all fields.';err.style.display='block';return;}
+  if(pass.length<6){err.textContent=es?'La contraseña debe tener al menos 6 caracteres.':'Password must be at least 6 characters.';err.style.display='block';return;}
+  const btn=document.getElementById('btn-join');btn.disabled=true;btn.textContent=es?'Uniéndote…':'Joining…';
+  try{
+    // 1) Resolve the company code → companyId
+    const codeSnap=await FB.getDoc(FB.doc(FB.db,'companyCodes',code));
+    if(!codeSnap.exists()){
+      err.textContent=es?'Código de empresa inválido. Verifícalo con tu supervisor.':'Invalid company code. Check it with your supervisor.';
+      err.style.display='block';btn.disabled=false;btn.textContent=es?'Unirse a la empresa':'Join company';return;
+    }
+    const cId=codeSnap.data().companyId;
+    // 2) Create the auth account (or sign in if it already exists)
+    let cred;
+    try{
+      cred=await FB.createUserWithEmailAndPassword(FB.auth,email,pass);
+    }catch(e){
+      if(e.code==='auth/email-already-in-use'){
+        cred=await FB.signInWithEmailAndPassword(FB.auth,email,pass);
+      }else{ throw e; }
+    }
+    const uid=cred.user.uid;
+    // Guard: if this account already owns a company, it can't also join another here
+    if(uid===cId){
+      err.textContent=es?'Esta cuenta es la dueña de la empresa; ya tiene acceso.':'This account owns the company; it already has access.';
+      err.style.display='block';btn.disabled=false;btn.textContent=es?'Unirse a la empresa':'Join company';return;
+    }
+    // 3) Create the membership link → grants access to companies/{cId}
+    await FB.setDoc(FB.doc(FB.db,'supervisorLinks',uid),{
+      companyId:cId, name, role:'supervisor', email, joinedAt:FB.serverTimestamp()
+    },{merge:true});
+    // onAuthStateChanged will load the joined company's context
+  }catch(e){
+    let msg=e.message;
+    if(e.code==='auth/wrong-password'||e.code==='auth/invalid-credential') msg=es?'Ese correo ya existe pero la contraseña no coincide.':'That email exists but the password does not match.';
+    if(e.code==='auth/invalid-email') msg=es?'Correo inválido.':'Invalid email.';
+    err.textContent=msg;err.style.display='block';
+    btn.disabled=false;btn.textContent=es?'Unirse a la empresa':'Join company';
   }
 }
 
@@ -548,7 +668,10 @@ function doLogout(){
   if(unsubExpenses){unsubExpenses();unsubExpenses=null;}
   if(unsubEmployees){unsubEmployees();unsubEmployees=null;}
   if(unsubTrips){unsubTrips();unsubTrips=null;}
+  if(unsubSupervisors){unsubSupervisors();unsubSupervisors=null;}
   employees=[];allExpenses=[];trips=[];companyData=null;companyId=null;
+  supervisorsList=[];
+  myRole='owner';myName='';
   closeModal();
   FB.signOut(FB.auth);
 }
@@ -579,23 +702,52 @@ async function forgotPassword(){
 
 // ═══ LOAD CONTEXT ═══
 async function loadSupervisorContext(){
-  companyId=currentUser.uid;
-  const snap=await FB.getDoc(FB.doc(FB.db,'companies',companyId));
-  if(!snap.exists()){
-    // user exists in auth but no company doc — sign out
-    showToast(lang==='es'?'No se encontró la empresa.':'Company not found.');
-    FB.signOut(FB.auth);return;
+  const uid=currentUser.uid;
+  // 1) Owner? (their own company doc lives at companies/{uid})
+  let snap=await FB.getDoc(FB.doc(FB.db,'companies',uid));
+  if(snap.exists()){
+    companyId=uid; myRole='owner';
+    companyData=snap.data();
+    myName=companyData.supervisorName||currentUser.email||'';
+  }else{
+    // 2) Joined supervisor? (supervisorLinks/{uid} → companyId)
+    let link=null;
+    try{ const ls=await FB.getDoc(FB.doc(FB.db,'supervisorLinks',uid)); if(ls.exists()) link=ls.data(); }catch(e){}
+    if(link&&link.companyId){
+      companyId=link.companyId; myRole='supervisor'; myName=link.name||currentUser.email||'';
+      const cs=await FB.getDoc(FB.doc(FB.db,'companies',companyId));
+      if(!cs.exists()){
+        showToast(lang==='es'?'La empresa ya no existe.':'Company no longer exists.');
+        FB.signOut(FB.auth);return;
+      }
+      companyData=cs.data();
+    }else{
+      // user exists in auth but has neither a company nor a link — sign out
+      showToast(lang==='es'?'No se encontró la empresa.':'Company not found.');
+      FB.signOut(FB.auth);return;
+    }
   }
-  companyData=snap.data();
   document.getElementById('hdr-company').textContent=companyData.company;
-  document.getElementById('hdr-name').textContent=companyData.supervisorName;
+  document.getElementById('hdr-name').textContent=myName||companyData.supervisorName;
   showApp();
   subscribeEmployees();
   subscribeExpenses();
   subscribeTrips();
+  if(myRole==='owner') subscribeSupervisors();
 }
 
-// ═══ REALTIME: TRIPS ═══
+// ═══ REALTIME: TEAM SUPERVISORS (owner only) ═══
+function subscribeSupervisors(){
+  try{
+    const q=FB.query(FB.collection(FB.db,'supervisorLinks'),FB.where('companyId','==',companyId));
+    unsubSupervisors=FB.onSnapshot(q,(snap)=>{
+      supervisorsList=[];
+      snap.forEach(d=>supervisorsList.push({uid:d.id,...d.data()}));
+      const acct=document.getElementById('panel-account');
+      if(acct&&acct.classList.contains('active')){ try{ renderAccount(); }catch(e){} }
+    },(err)=>{ console.warn('supervisors subscribe error',err); });
+  }catch(e){ console.warn('subscribeSupervisors',e); }
+}
 function subscribeTrips(){
   const q=FB.query(FB.collection(FB.db,'companies',companyId,'trips'));
   unsubTrips=FB.onSnapshot(q,(snap)=>{
@@ -694,14 +846,28 @@ function renderEmployees(){
     return;
   }
   el.innerHTML=employees.map(emp=>{
-    // Count only the CURRENT trip's expenses (by tripId) so the amount + leftover
-    // roll-over shows correctly. Falls back to all expenses if no current trip.
-    const empExpenses=emp.currentTripId
-      ? allExpenses.filter(ex=>ex.employeeId===emp.id && ex.tripId===emp.currentTripId)
-      : allExpenses.filter(ex=>ex.employeeId===emp.id);
+    // Show ONLY the relevant trip's expenses (by tripId). While the trip is active
+    // we use currentTripId; once finished we keep showing that same ended trip via
+    // lastTripId. We NEVER sum all-history — that made finished trips double-count
+    // every previous trip and show negative balances.
+    const showTripId=emp.currentTripId||emp.lastTripId||null;
+    const empExpenses=showTripId
+      ? allExpenses.filter(ex=>ex.employeeId===emp.id && ex.tripId===showTripId)
+      : [];
     const total=empExpenses.reduce((s,e)=>s+(e.monto||0),0);
     const assigned=(typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0);
     const remaining=assigned-total;
+    // Leftover that can roll into the NEXT trip (kept separate from the base so it
+    // is never double-counted: base changes via Editar viáticos, leftover via the
+    // checkbox at Iniciar viaje).
+    const leftover=(typeof emp.lastLeftover==='number'&&emp.lastLeftover>0.001)?emp.lastLeftover:0;
+    const nextAvail=Math.round((assigned+leftover)*100)/100;
+    const nextTripHint=(!emp.tripActive&&leftover>0)
+      ? `<div style="background:var(--surface2);border:1px dashed var(--border);border-radius:10px;padding:9px 12px;margin-top:10px;font-size:12.5px;line-height:1.45;color:var(--text)">
+           💡 ${lang==='es'?'Próximo viaje':'Next trip'}: <b style="color:var(--green)">$${nextAvail.toFixed(2)}</b>
+           <span style="color:var(--muted)">&nbsp;($${assigned.toFixed(2)} ${lang==='es'?'base':'base'} + $${leftover.toFixed(2)} ${lang==='es'?'sobrante':'leftover'})</span>
+         </div>`
+      : '';
     return `<div class="emp-card">
       <div class="emp-card-head">
         <div>
@@ -728,6 +894,7 @@ function renderEmployees(){
           <div class="emp-money-v" style="color:${remaining<0?'var(--red)':'var(--green)'}">$${remaining.toFixed(2)}</div>
         </div>
       </div>
+      ${nextTripHint}
       <div class="emp-actions">
         <button class="btn btn-ghost btn-sm" onclick="editAmount('${emp.id}')">💵 ${lang==='es'?'Editar viáticos':'Edit per-diem'}</button>
         ${emp.tripActive
@@ -1098,24 +1265,35 @@ function editAmount(id){
   showModal(`
     <div class="modal-icon">💵</div>
     <div class="modal-title">${es?'Editar viáticos':'Edit per-diem'}</div>
-    <div class="modal-body">${es?'Asigna el monto de viáticos para':'Set the per-diem amount for'} <b style="color:var(--text)">${esc(emp.name)}</b>.${emp.tripActive?(es?' Se actualizará durante su viaje activo.':' It will update during their active trip.'):''}</div>
+    <div class="modal-body">${es?'Viático base actual de':'Current base per-diem for'} <b style="color:var(--text)">${esc(emp.name)}</b>: <b style="color:var(--rhino)">$${cur.toFixed(2)}</b>.${emp.tripActive?(es?' Se actualizará durante su viaje activo.':' It will update during their active trip.'):''}</div>
     <div class="field">
+      <div class="field-label">${es?'Monto (USD)':'Amount (USD)'}</div>
       <input class="input" id="edit-amount-val" type="number" inputmode="decimal" value="${cur}" autocomplete="off">
     </div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.45;margin-bottom:12px">
+      ${es?'“Reemplazar” fija el viático base en el monto escrito. “Sumar” lo agrega al viático base actual. El sobrante de un viaje anterior se suma aparte al Iniciar viaje.':'“Replace” sets the base per-diem to the typed amount. “Add” adds it to the current base. Leftover from a previous trip is added separately when starting a trip.'}
+    </div>
     <div id="edit-amount-err" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none"></div>
+    <div class="btn-row" style="margin-bottom:8px">
+      <button class="btn btn-green" onclick="saveAmount('${id}','add')">${es?'Sumar al base':'Add to base'}</button>
+      <button class="btn btn-rhino" onclick="saveAmount('${id}','replace')">${es?'Reemplazar':'Replace'}</button>
+    </div>
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
-      <button class="btn btn-rhino" onclick="saveAmount('${id}')">${es?'Guardar':'Save'}</button>
     </div>`);
 }
 
-async function saveAmount(id){
+async function saveAmount(id,mode){
   const emp=employees.find(e=>e.id===id);
   if(!emp)return;
-  const val=parseFloat(document.getElementById('edit-amount-val').value);
+  const raw=parseFloat(document.getElementById('edit-amount-val').value);
   const err=document.getElementById('edit-amount-err');
   const es=lang==='es';
-  if(isNaN(val)||val<=0){err.textContent=es?'Ingresa un monto válido.':'Enter a valid amount.';err.style.display='block';return;}
+  if(isNaN(raw)||raw<=0){err.textContent=es?'Ingresa un monto válido.':'Enter a valid amount.';err.style.display='block';return;}
+  const curAssigned=(typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0);
+  // 'add' tops up the base per-diem; 'replace' overwrites it. Leftover is untouched
+  // here so it can't be double-counted against the Iniciar viaje checkbox.
+  const val=(mode==='add')?Math.round((curAssigned+raw)*100)/100:Math.round(raw*100)/100;
   try{
     const cmd={type:'setAmount',amount:val,ts:Date.now()};
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
@@ -1125,7 +1303,9 @@ async function saveAmount(id){
       try{ await FB.updateDoc(FB.doc(FB.db,'codes',emp.code),{assignedAmount:val}); }catch(e){}
     }
     closeModal();
-    showToast(es?'✓ Viáticos actualizados':'✓ Per-diem updated');
+    showToast(mode==='add'
+      ? (es?`✓ Sumado — viático base $${val.toFixed(2)}`:`✓ Added — base per-diem $${val.toFixed(2)}`)
+      : (es?'✓ Viáticos actualizados':'✓ Per-diem updated'));
   }catch(e){showToast('Error: '+e.message);}
 }
 
@@ -1175,7 +1355,7 @@ async function confirmSupervisorStart(id,leftover){
     const tripId='trip_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
     const cmd={type:'start',amount:val,ts:Date.now(),tripId};
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
-      assignedAmount:val, tripActive:true, supervisorCommand:cmd, lastLeftover:0, currentTripId:tripId
+      assignedAmount:val, tripActive:true, supervisorCommand:cmd, lastLeftover:0, currentTripId:tripId, lastTripId:null
     });
     // Create the trip metadata doc
     try{
@@ -1209,20 +1389,26 @@ async function confirmSupervisorEnd(id){
   if(!emp)return;
   const es=lang==='es';
   try{
-    // Compute the leftover of the trip being ended, so it can be offered
-    // on the next trip — independent of whether the employee app is open.
-    const empExpenses=allExpenses.filter(ex=>ex.employeeId===emp.id);
+    // Compute the leftover of THIS trip only (by tripId) so it can be offered on
+    // the next trip — independent of whether the employee app is open.
+    const endedTripId=emp.currentTripId||null;
+    const empExpenses=endedTripId
+      ? allExpenses.filter(ex=>ex.employeeId===emp.id && ex.tripId===endedTripId)
+      : [];
     const spent=empExpenses.reduce((s,e)=>s+(e.monto||0),0);
     const assigned=(typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0);
     const leftover=Math.max(0, Math.round((assigned-spent)*100)/100);
     const cmd={type:'end',ts:Date.now()};
+    // Keep lastTripId so the card keeps showing this finished trip's numbers
+    // instead of falling back and summing every trip the employee ever had.
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
-      tripActive:false, supervisorCommand:cmd, lastLeftover:leftover, currentTripId:null
+      tripActive:false, supervisorCommand:cmd, lastLeftover:leftover,
+      currentTripId:null, lastTripId:endedTripId
     });
     // Close the trip metadata doc
-    if(emp.currentTripId){
+    if(endedTripId){
       try{
-        await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',emp.currentTripId),{
+        await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',endedTripId),{
           status:'ended', spent:Math.round(spent*100)/100, leftover, endedAt:FB.serverTimestamp()
         },{merge:true});
       }catch(e){}
@@ -1495,9 +1681,40 @@ function renderAccount(){
   const ti=trialInfo();
   const es=lang==='es';
   const admin=isAdminUser();
+  const owner=(myRole==='owner');
   const empCount=employees.length;
   const expCount=allExpenses.length;
   const max=ti.maxEmployees===Infinity?(es?'ilimitado':'unlimited'):ti.maxEmployees;
+
+  // Company code card (owner shares it; members can't manage the plan/billing).
+  const codeCardHtml = owner ? `
+    <div class="acct-card">
+      <div class="acct-plan-label">${es?'CÓDIGO DE EMPRESA':'COMPANY CODE'}</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:10px">${es?'Comparte este código con otro supervisor para que se una a esta empresa (acceso completo, sin facturación).':'Share this code with another supervisor so they can join this company (full access, no billing).'}</div>
+      ${companyData.companyCode
+        ? `<div class="emp-code-box"><span class="emp-code">${esc(companyData.companyCode)}</span><button class="copy-btn" onclick="copyCode('${esc(companyData.companyCode)}')">${es?'Copiar':'Copy'}</button></div>`
+        : `<button class="btn btn-ghost acct-btn" onclick="generateCompanyCodeNow()">🔑 ${es?'Generar código de empresa':'Generate company code'}</button>`}
+    </div>` : '';
+
+  // Membership banner for joined supervisors (they don't see plan/billing).
+  const memberBannerHtml = owner ? '' : `
+    <div class="acct-card" style="border-color:rgba(5,150,105,.4)">
+      <div class="acct-plan-label" style="color:var(--green)">${es?'MEMBRESÍA':'MEMBERSHIP'}</div>
+      <div style="font-size:13px;color:var(--text);line-height:1.5">${es?'Te uniste a':'You joined'} <b>${esc(companyData.company)}</b> ${es?'como supervisor. Tienes acceso completo para gestionar empleados, viáticos y reportes. La facturación la maneja el supervisor principal.':'as a supervisor. You have full access to manage employees, per-diems and reports. Billing is handled by the main supervisor.'}</div>
+    </div>`;
+
+  // Team supervisors management (owner only): list + revoke access.
+  const supTeamHtml = owner ? `
+    <div class="acct-card">
+      <div class="acct-plan-label">${es?'SUPERVISORES DEL EQUIPO':'TEAM SUPERVISORS'}</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:10px">${es?'Supervisores que se unieron con tu código. Quitar a uno le revoca el acceso al instante.':'Supervisors who joined with your code. Removing one revokes their access instantly.'}</div>
+      ${supervisorsList.length ? supervisorsList.map(s=>`
+        <div class="acct-row" style="align-items:center;gap:8px">
+          <span class="acct-k" style="flex:1;line-height:1.35">${esc(s.name||s.email||'—')}<br><span style="font-size:11px;color:var(--muted)">${esc(s.email||'')}</span></span>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmRemoveSupervisor('${s.uid}','${esc(s.name||s.email||'')}')">${es?'Quitar':'Remove'}</button>
+        </div>`).join('')
+      : `<div style="font-size:13px;color:var(--muted);text-align:center;padding:8px">${es?'Aún nadie se ha unido con tu código.':'Nobody has joined with your code yet.'}</div>`}
+    </div>` : '';
 
   let planStatusLine='';
   if(admin){
@@ -1560,19 +1777,23 @@ function renderAccount(){
       <button class="btn btn-ghost acct-btn" onclick="editCompanyAddress()">📍 ${es?'Editar dirección / sede':'Edit address / location'}</button>
     </div>
 
-    ${planCardHtml}
+    ${owner?planCardHtml:memberBannerHtml}
 
-    ${adminHtml}
+    ${codeCardHtml}
+
+    ${supTeamHtml}
+
+    ${owner?adminHtml:''}
 
     <div class="acct-card">
       <div class="acct-plan-label">${es?'GESTIÓN':'MANAGEMENT'}</div>
       <button class="btn btn-ghost acct-btn" onclick="exportExcel()">📊 ${es?'Descargar todos los gastos (CSV)':'Download all expenses (CSV)'}</button>
       <button class="btn btn-ghost acct-btn" onclick="downloadAccountPDF()">📄 ${es?'Descargar respaldo PDF':'Download PDF backup'}</button>
-      <button class="btn btn-ghost acct-btn" onclick="confirmNewCompany()">🏢 ${es?'Crear nueva empresa':'Create new company'}</button>
+      ${owner?`<button class="btn btn-ghost acct-btn" onclick="confirmNewCompany()">🏢 ${es?'Crear nueva empresa':'Create new company'}</button>`:''}
       <button class="btn btn-ghost acct-btn" onclick="doLogout()">🚪 ${es?'Cerrar sesión':'Log out'}</button>
     </div>
 
-    ${dangerHtml}
+    ${owner?dangerHtml:''}
 
     <div class="acct-card">
       <div class="acct-plan-label">${es?'SOPORTE TÉCNICO':'TECHNICAL SUPPORT'}</div>
@@ -1861,6 +2082,28 @@ function generateCode(company,name){
   const num=Math.floor(1000+Math.random()*9000);
   return `${cPart}-${nPart}-${num}`;
 }
+// Company join code: <PREFIX>-CO-<4 digits> (e.g. RHINO-CO-4821)
+function generateCompanyCode(company){
+  const cPart=(company||'EMP').replace(/[^A-Za-z]/g,'').slice(0,5).toUpperCase()||'EMP';
+  const num=Math.floor(1000+Math.random()*9000);
+  return `${cPart}-CO-${num}`;
+}
+// Reserve a unique company code (retries on the rare collision).
+async function reserveCompanyCode(companyId,company){
+  for(let i=0;i<6;i++){
+    const code=generateCompanyCode(company);
+    try{
+      const snap=await FB.getDoc(FB.doc(FB.db,'companyCodes',code));
+      if(snap.exists()) continue;
+      await FB.setDoc(FB.doc(FB.db,'companyCodes',code),{companyId,company:company||'',createdAt:FB.serverTimestamp()});
+      return code;
+    }catch(e){ /* try again */ }
+  }
+  // Fallback: timestamp-suffixed, effectively unique
+  const code=generateCompanyCode(company)+'-'+Date.now().toString(36).slice(-3).toUpperCase();
+  try{ await FB.setDoc(FB.doc(FB.db,'companyCodes',code),{companyId,company:company||'',createdAt:FB.serverTimestamp()}); }catch(e){}
+  return code;
+}
 
 // ═══ REGENERATE CODE (lost code; keeps all employee data) ═══
 function confirmRegenCode(id,name){
@@ -1935,6 +2178,8 @@ function formatDate(d){return d.toLocaleDateString(lang==='es'?'es-US':'en-US',{
 
 // expose
 window.switchLoginTab=switchLoginTab;window.doRegister=doRegister;window.doLogin=doLogin;window.doLogout=doLogout;
+window.doJoin=doJoin;window.generateCompanyCodeNow=generateCompanyCodeNow;
+window.confirmRemoveSupervisor=confirmRemoveSupervisor;window.removeSupervisor=removeSupervisor;
 window.switchTab=switchTab;window.toggleLang=toggleLang;window.showAddEmployee=showAddEmployee;window.saveEmployee=saveEmployee;
 window.confirmDeleteEmployee=confirmDeleteEmployee;window.deleteEmployee=deleteEmployee;window.viewReceipt=viewReceipt;
 window.confirmRegenCode=confirmRegenCode;window.regenCode=regenCode;window.viewEmployeeInfo=viewEmployeeInfo;
