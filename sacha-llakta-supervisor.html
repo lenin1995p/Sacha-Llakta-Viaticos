@@ -434,8 +434,10 @@ let companyId=null;
 let companyData=null;
 let employees=[];
 let allExpenses=[];
+let trips=[];
 let unsubExpenses=null;
 let unsubEmployees=null;
+let unsubTrips=null;
 let reportFilter='all';
 let pendingShowRegister=false;
 
@@ -545,7 +547,8 @@ async function doLogin(){
 function doLogout(){
   if(unsubExpenses){unsubExpenses();unsubExpenses=null;}
   if(unsubEmployees){unsubEmployees();unsubEmployees=null;}
-  employees=[];allExpenses=[];companyData=null;companyId=null;
+  if(unsubTrips){unsubTrips();unsubTrips=null;}
+  employees=[];allExpenses=[];trips=[];companyData=null;companyId=null;
   closeModal();
   FB.signOut(FB.auth);
 }
@@ -589,6 +592,17 @@ async function loadSupervisorContext(){
   showApp();
   subscribeEmployees();
   subscribeExpenses();
+  subscribeTrips();
+}
+
+// ═══ REALTIME: TRIPS ═══
+function subscribeTrips(){
+  const q=FB.query(FB.collection(FB.db,'companies',companyId,'trips'));
+  unsubTrips=FB.onSnapshot(q,(snap)=>{
+    trips=[];
+    snap.forEach(d=>trips.push({id:d.id,...d.data()}));
+    renderReports();
+  },(err)=>{ console.warn('trips subscribe error',err); });
 }
 
 // ═══ REALTIME: EMPLOYEES ═══
@@ -739,64 +753,154 @@ function renderFilters(){
 }
 function setFilter(f){reportFilter=f;renderFilters();renderReports();}
 
-// Track which employee group is expanded in reports
+// Track which employee group + which trip is expanded in reports
 let expandedGroup=null;
+let expandedTrip=null;
 function toggleGroup(key){
   expandedGroup=(expandedGroup===key)?null:key;
+  expandedTrip=null;
+  renderReports();
+}
+function toggleTrip(tripKey){
+  expandedTrip=(expandedTrip===tripKey)?null:tripKey;
   renderReports();
 }
 
-// ═══ RENDER REPORTS (grouped by employee) ═══
+// Format a trip's date range for display (e.g. "30 jun 2026" or "25–30 jun 2026")
+function tripDateLabel(trip,expenses){
+  const es=lang==='es';
+  let start=null,end=null;
+  if(trip){
+    if(trip.startedAt&&trip.startedAt.toDate) start=trip.startedAt.toDate();
+    if(trip.endedAt&&trip.endedAt.toDate) end=trip.endedAt.toDate();
+  }
+  // Fallback to expense dates if trip timestamps missing
+  if(!start&&expenses&&expenses.length){
+    const ds=expenses.map(e=>e.createdAt&&e.createdAt.toDate?e.createdAt.toDate():null).filter(Boolean).sort((a,b)=>a-b);
+    if(ds.length){ start=ds[0]; if(!end) end=ds[ds.length-1]; }
+  }
+  if(!start) return es?'Viaje sin fecha':'Trip without date';
+  const opts={month:'short',day:'numeric',year:'numeric'};
+  const loc=es?'es-US':'en-US';
+  const sStr=start.toLocaleDateString(loc,opts);
+  if(!end) return sStr;
+  const sameDay=start.toDateString()===end.toDateString();
+  if(sameDay) return sStr;
+  const eStr=end.toLocaleDateString(loc,opts);
+  return `${sStr} – ${eStr}`;
+}
+
+// ═══ RENDER REPORTS (grouped by employee → trip → expenses) ═══
 function renderReports(){
   const el=document.getElementById('reports-list');
+  if(!el) return;
   let list=allExpenses;
   if(reportFilter!=='all') list=allExpenses.filter(ex=>ex.employeeId===reportFilter);
-  if(!list.length){
-    el.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">'+(lang==='es'?'Sin gastos':'No expenses')+'</div></div>';
-    return;
-  }
   const es=lang==='es';
-  // Group expenses by employeeId (handles deleted employees via stored employeeName)
+
+  // Build employee groups
   const groups={};
   list.forEach(ex=>{
     const key=ex.employeeId||('__'+(ex.employeeName||'unknown'));
     if(!groups[key]){
       const emp=employees.find(e=>e.id===ex.employeeId);
-      groups[key]={
-        key,
-        name: emp?emp.name:(ex.employeeName||'—'),
-        exists: !!emp,
-        items:[], total:0
-      };
+      groups[key]={ key, name: emp?emp.name:(ex.employeeName||'—'), exists: !!emp, items:[], total:0 };
     }
     groups[key].items.push(ex);
     groups[key].total+=ex.monto||0;
   });
+
+  // Include employees that exist but have no expenses yet (if filtered or with active trips)
+  if(reportFilter!=='all'){
+    const emp=employees.find(e=>e.id===reportFilter);
+    if(emp && !groups[emp.id]) groups[emp.id]={key:emp.id,name:emp.name,exists:true,items:[],total:0};
+  }
+
   const groupArr=Object.values(groups).sort((a,b)=>b.total-a.total);
+  if(!groupArr.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">'+(es?'Sin gastos':'No expenses')+'</div></div>';
+    return;
+  }
 
   el.innerHTML=groupArr.map(g=>{
     const open=expandedGroup===g.key;
-    const itemsHtml=open? g.items.map(ex=>{
-      const color=ex.catColor||'#64748b';
-      const dateStr=ex.createdAt&&ex.createdAt.toDate?formatDate(ex.createdAt.toDate()):'';
-      return `<div class="feed-item" style="margin-left:6px">
-        <div class="feed-icon" style="background:${color}22">${ex.catEmoji||'📦'}</div>
-        <div class="feed-body">
-          <div class="feed-desc">${esc(ex.desc)}</div>
-          <div class="feed-meta">${esc(ex.catName||'')} · ${dateStr}</div>
-        </div>
-        <div class="feed-right">
-          <div class="feed-amount">-$${(ex.monto||0).toFixed(2)}</div>
-          <div style="display:flex;gap:6px;margin-top:4px">
-            ${ex.receipt?`<button class="feed-receipt-btn" onclick="viewReceipt('${ex.id}')">📷</button>`:''}
-            <button class="feed-receipt-btn" style="color:var(--red);border-color:rgba(239,68,68,.3)" onclick="confirmDeleteExpense('${ex.id}')">🗑️</button>
-          </div>
-        </div>
+    let bodyHtml='';
+    if(open){
+      // Group this employee's expenses by tripId
+      const tripMap={};
+      g.items.forEach(ex=>{
+        const tid=ex.tripId||'__notrip';
+        if(!tripMap[tid]) tripMap[tid]={tripId:tid,items:[],total:0};
+        tripMap[tid].items.push(ex);
+        tripMap[tid].total+=ex.monto||0;
+      });
+      // Also surface trips that exist but have zero expenses (for this employee)
+      trips.filter(t=>t.employeeId===g.key).forEach(t=>{
+        if(!tripMap[t.tripId]) tripMap[t.tripId]={tripId:t.tripId,items:[],total:0};
+      });
+      const tripArr=Object.values(tripMap).map(tg=>{
+        const trip=trips.find(t=>t.tripId===tg.tripId);
+        return {...tg, trip, label:tripDateLabel(trip,tg.items),
+          sortKey:(trip&&trip.startedAt&&trip.startedAt.toDate)?trip.startedAt.toDate().getTime():
+                  (tg.items[0]&&tg.items[0].createdAt&&tg.items[0].createdAt.toDate?tg.items[0].createdAt.toDate().getTime():0)};
+      }).sort((a,b)=>b.sortKey-a.sortKey);
+
+      bodyHtml=tripArr.map(tg=>{
+        const tripKey=g.key+'::'+tg.tripId;
+        const topen=expandedTrip===tripKey;
+        const trip=tg.trip;
+        const statusBadge = trip&&trip.status==='active'
+          ? `<span class="rg-tag" style="background:rgba(34,197,94,.15);color:var(--green);border-color:rgba(34,197,94,.3)">${es?'activo':'active'}</span>`
+          : '';
+        const note = trip&&trip.note ? `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:6px 10px;background:var(--surface2);border-radius:8px;margin:6px 0">📝 ${esc(trip.note)}</div>` : '';
+        const itemsHtml = topen ? tg.items.map(ex=>{
+          const color=ex.catColor||'#64748b';
+          const dateStr=ex.createdAt&&ex.createdAt.toDate?formatDate(ex.createdAt.toDate()):'';
+          return `<div class="feed-item" style="margin-left:6px">
+            <div class="feed-icon" style="background:${color}22">${ex.catEmoji||'📦'}</div>
+            <div class="feed-body">
+              <div class="feed-desc">${esc(ex.desc)}</div>
+              <div class="feed-meta">${esc(ex.catName||'')} · ${dateStr}</div>
+            </div>
+            <div class="feed-right">
+              <div class="feed-amount">-$${(ex.monto||0).toFixed(2)}</div>
+              <div style="display:flex;gap:6px;margin-top:4px">
+                ${ex.receipt?`<button class="feed-receipt-btn" onclick="viewReceipt('${ex.id}')">📷</button>`:''}
+                <button class="feed-receipt-btn" style="color:var(--red);border-color:rgba(239,68,68,.3)" onclick="confirmDeleteExpense('${ex.id}')">🗑️</button>
+              </div>
+            </div>
+          </div>`;
+        }).join('') : '';
+        const emptyMsg = (topen && !tg.items.length) ? `<div style="font-size:12px;color:var(--muted);text-align:center;padding:10px">${es?'Sin gastos en este viaje':'No expenses in this trip'}</div>` : '';
+        const tripActions = topen ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            <button class="btn btn-ghost btn-sm" onclick="editTripNote('${tg.tripId}')">📝 ${es?'Nota del viaje':'Trip note'}</button>
+            <button class="btn btn-ghost btn-sm" onclick="downloadTripPDF('${g.key}','${tg.tripId}')">📄 PDF</button>
+            <button class="btn btn-ghost btn-sm" onclick="downloadTripCSV('${g.key}','${tg.tripId}')">📊 CSV</button>
+          </div>` : '';
+        return `<div class="report-group" style="margin:6px 0;border:1px solid var(--border);border-radius:10px">
+          <button class="report-group-head" onclick="toggleTrip('${tripKey}')" style="padding:10px 12px">
+            <div class="rg-left">
+              <span class="rg-arrow ${topen?'open':''}">▶</span>
+              <span class="rg-name" style="font-size:14px">🧳 ${tg.label}</span>
+              ${statusBadge}
+            </div>
+            <div class="rg-right">
+              <span class="rg-count">${tg.items.length}</span>
+              <span class="rg-total">-$${tg.total.toFixed(2)}</span>
+            </div>
+          </button>
+          ${topen?`<div class="report-group-body" style="padding:8px 10px">${note}${itemsHtml}${emptyMsg}${tripActions}</div>`:''}
+        </div>`;
+      }).join('');
+
+      // Employee-level actions (download everything)
+      const empActions=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <button class="btn btn-ghost btn-sm" onclick="downloadEmployeeAllPDF('${g.key}')">📄 ${es?'Todo el empleado (PDF)':'Whole employee (PDF)'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="downloadEmployeeAllCSV('${g.key}')">📊 ${es?'Todo (CSV)':'All (CSV)'}</button>
+        ${!g.exists?`<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteGroup('${g.key}','${esc(g.name)}')">🗑️ ${es?'Eliminar todo':'Delete all'}</button>`:''}
       </div>`;
-    }).join('') : '';
-    const delGroupBtn = !g.exists
-      ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);width:100%;margin-top:8px" onclick="confirmDeleteGroup('${g.key}','${esc(g.name)}')">🗑️ ${es?'Eliminar todos los gastos de este empleado':'Delete all expenses for this employee'}</button>`
-      : '';
+      bodyHtml = (bodyHtml||`<div style="font-size:13px;color:var(--muted);text-align:center;padding:10px">${es?'Sin viajes registrados aún':'No trips recorded yet'}</div>`)+empActions;
+    }
     return `<div class="report-group">
       <button class="report-group-head" onclick="toggleGroup('${g.key}')">
         <div class="rg-left">
@@ -809,7 +913,7 @@ function renderReports(){
           <span class="rg-total">-$${g.total.toFixed(2)}</span>
         </div>
       </button>
-      ${open?`<div class="report-group-body">${itemsHtml}${delGroupBtn}</div>`:''}
+      ${open?`<div class="report-group-body">${bodyHtml}</div>`:''}
     </div>`;
   }).join('');
 }
@@ -1064,10 +1168,18 @@ async function confirmSupervisorStart(id,leftover){
   let added=false;
   if(chk&&chk.checked&&lo>0){ val=Math.round((val+lo)*100)/100; added=true; }
   try{
-    const cmd={type:'start',amount:val,ts:Date.now()};
+    const tripId='trip_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+    const cmd={type:'start',amount:val,ts:Date.now(),tripId};
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
-      assignedAmount:val, tripActive:true, supervisorCommand:cmd, lastLeftover:0
+      assignedAmount:val, tripActive:true, supervisorCommand:cmd, lastLeftover:0, currentTripId:tripId
     });
+    // Create the trip metadata doc
+    try{
+      await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',tripId),{
+        tripId, employeeId:id, employeeName:emp.name, company:companyData.company||'',
+        assignedAmount:val, status:'active', startedAt:FB.serverTimestamp(), note:''
+      },{merge:true});
+    }catch(e){}
     if(emp.code){ try{ await FB.updateDoc(FB.doc(FB.db,'codes',emp.code),{assignedAmount:val}); }catch(e){} }
     closeModal();
     showToast(added
@@ -1101,8 +1213,16 @@ async function confirmSupervisorEnd(id){
     const leftover=Math.max(0, Math.round((assigned-spent)*100)/100);
     const cmd={type:'end',ts:Date.now()};
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
-      tripActive:false, supervisorCommand:cmd, lastLeftover:leftover
+      tripActive:false, supervisorCommand:cmd, lastLeftover:leftover, currentTripId:null
     });
+    // Close the trip metadata doc
+    if(emp.currentTripId){
+      try{
+        await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',emp.currentTripId),{
+          status:'ended', spent:Math.round(spent*100)/100, leftover, endedAt:FB.serverTimestamp()
+        },{merge:true});
+      }catch(e){}
+    }
     closeModal();
     showToast(es?'✓ Viaje finalizado':'✓ Trip ended');
   }catch(e){showToast('Error: '+e.message);}
@@ -1157,6 +1277,184 @@ function exportExcel(){
   showToast(lang==='es'?'✓ Excel descargado':'✓ Excel downloaded');
 }
 function csvSafe(s){s=String(s||'');if(s.includes(',')||s.includes('"')||s.includes('\n'))return '"'+s.replace(/"/g,'""')+'"';return s;}
+
+// ═══ TRIP NOTE (supervisor writes a note per trip) ═══
+function editTripNote(tripId){
+  const trip=trips.find(t=>t.tripId===tripId);
+  const es=lang==='es';
+  const cur=trip&&trip.note?esc(trip.note):'';
+  showModal(`
+    <div class="modal-icon">📝</div>
+    <div class="modal-title">${es?'Nota del viaje':'Trip note'}</div>
+    <div class="modal-body">${es?'Escribe cualquier detalle de este viaje (ciudad, estado, país, motivo…). Se incluirá en el PDF y CSV.':'Write any detail about this trip (city, state, country, purpose…). It will be included in the PDF and CSV.'}</div>
+    <div class="field">
+      <textarea class="input" id="trip-note-val" rows="3" style="resize:vertical" placeholder="${es?'Ej: Viaje a Kansas City, MO — mantenimiento de grúa':'Ex: Trip to Kansas City, MO — crane maintenance'}">${cur}</textarea>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-rhino" onclick="saveTripNote('${tripId}')">${es?'Guardar':'Save'}</button>
+    </div>`);
+}
+async function saveTripNote(tripId){
+  const es=lang==='es';
+  const val=document.getElementById('trip-note-val').value.trim();
+  try{
+    await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',tripId),{note:val},{merge:true});
+    const t=trips.find(x=>x.tripId===tripId); if(t) t.note=val;
+    closeModal();
+    renderReports();
+    showToast(es?'✓ Nota guardada':'✓ Note saved');
+  }catch(e){showToast('Error: '+e.message);}
+}
+
+// Helper: gather one trip's data (employee, trip meta, expenses)
+function gatherTrip(empKey,tripId){
+  const emp=employees.find(e=>e.id===empKey);
+  const trip=trips.find(t=>t.tripId===tripId);
+  const items=allExpenses.filter(ex=>ex.employeeId===empKey && (ex.tripId||'__notrip')===tripId);
+  const name=emp?emp.name:(items[0]&&items[0].employeeName)||'—';
+  return {emp,trip,items,name};
+}
+
+// ═══ DOWNLOAD: ONE TRIP (CSV) ═══
+function downloadTripCSV(empKey,tripId){
+  const es=lang==='es';
+  const {trip,items,name}=gatherTrip(empKey,tripId);
+  if(!items.length){showToast(es?'Este viaje no tiene gastos.':'This trip has no expenses.');return;}
+  const label=tripDateLabel(trip,items);
+  const note=trip&&trip.note?trip.note:'';
+  let csv='';
+  csv+=csvSafe((es?'Empleado: ':'Employee: ')+name)+'\n';
+  csv+=csvSafe((es?'Viaje: ':'Trip: ')+label)+'\n';
+  if(note) csv+=csvSafe((es?'Nota: ':'Note: ')+note)+'\n';
+  csv+='\n';
+  const headers=es?['Categoría','Descripción','Monto','Fecha','Hora']:['Category','Description','Amount','Date','Time'];
+  csv+=headers.join(',')+'\n';
+  let total=0;
+  items.forEach(ex=>{
+    const d=ex.createdAt&&ex.createdAt.toDate?ex.createdAt.toDate():null;
+    total+=(ex.monto||0);
+    csv+=[csvSafe(ex.catName||''),csvSafe(ex.desc||''),(ex.monto||0).toFixed(2),d?d.toLocaleDateString():'',d?d.toLocaleTimeString():''].join(',')+'\n';
+  });
+  csv+='\n'+csvSafe((es?'TOTAL':'TOTAL'))+','+total.toFixed(2)+'\n';
+  downloadCSVFile(csv,'viaje_'+name.replace(/\s+/g,'_')+'_'+label.replace(/[^\w]+/g,'_'));
+}
+
+// ═══ DOWNLOAD: WHOLE EMPLOYEE (CSV, all trips) ═══
+function downloadEmployeeAllCSV(empKey){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===empKey);
+  const name=emp?emp.name:'empleado';
+  const items=allExpenses.filter(ex=>ex.employeeId===empKey);
+  if(!items.length){showToast(es?'Sin gastos para exportar.':'No expenses to export.');return;}
+  const empTrips=trips.filter(t=>t.employeeId===empKey);
+  let csv=csvSafe((es?'Empleado: ':'Employee: ')+name)+'\n\n';
+  const headers=es?['Viaje','Nota','Categoría','Descripción','Monto','Fecha','Hora']:['Trip','Note','Category','Description','Amount','Date','Time'];
+  csv+=headers.join(',')+'\n';
+  // Group by trip
+  const byTrip={};
+  items.forEach(ex=>{const tid=ex.tripId||'__notrip';(byTrip[tid]=byTrip[tid]||[]).push(ex);});
+  let grand=0;
+  Object.keys(byTrip).forEach(tid=>{
+    const trip=empTrips.find(t=>t.tripId===tid);
+    const label=tripDateLabel(trip,byTrip[tid]);
+    const note=trip&&trip.note?trip.note:'';
+    byTrip[tid].forEach(ex=>{
+      const d=ex.createdAt&&ex.createdAt.toDate?ex.createdAt.toDate():null;
+      grand+=(ex.monto||0);
+      csv+=[csvSafe(label),csvSafe(note),csvSafe(ex.catName||''),csvSafe(ex.desc||''),(ex.monto||0).toFixed(2),d?d.toLocaleDateString():'',d?d.toLocaleTimeString():''].join(',')+'\n';
+    });
+  });
+  csv+='\n'+csvSafe(es?'TOTAL GENERAL':'GRAND TOTAL')+',,,,'+grand.toFixed(2)+'\n';
+  downloadCSVFile(csv,'empleado_'+name.replace(/\s+/g,'_')+'_completo');
+}
+
+function downloadCSVFile(csv,baseName){
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=baseName+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(lang==='es'?'✓ CSV descargado':'✓ CSV downloaded');
+}
+
+// ═══ DOWNLOAD: ONE TRIP (PDF) ═══
+function downloadTripPDF(empKey,tripId){
+  const es=lang==='es';
+  const {trip,items,name}=gatherTrip(empKey,tripId);
+  if(!items.length){showToast(es?'Este viaje no tiene gastos.':'This trip has no expenses.');return;}
+  if(!window.jspdf||!window.jspdf.jsPDF){showToast(es?'No se pudo cargar el PDF.':'Could not load PDF.');return;}
+  const label=tripDateLabel(trip,items);
+  const note=trip&&trip.note?trip.note:'';
+  tripPDF([{name,label,note,items}], (es?'Viaje - ':'Trip - ')+name, 'viaje_'+name.replace(/\s+/g,'_'));
+}
+
+// ═══ DOWNLOAD: WHOLE EMPLOYEE (PDF, all trips) ═══
+function downloadEmployeeAllPDF(empKey){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===empKey);
+  const name=emp?emp.name:'empleado';
+  const items=allExpenses.filter(ex=>ex.employeeId===empKey);
+  if(!items.length){showToast(es?'Sin gastos para exportar.':'No expenses to export.');return;}
+  if(!window.jspdf||!window.jspdf.jsPDF){showToast(es?'No se pudo cargar el PDF.':'Could not load PDF.');return;}
+  const empTrips=trips.filter(t=>t.employeeId===empKey);
+  const byTrip={};
+  items.forEach(ex=>{const tid=ex.tripId||'__notrip';(byTrip[tid]=byTrip[tid]||[]).push(ex);});
+  const sections=Object.keys(byTrip).map(tid=>{
+    const trip=empTrips.find(t=>t.tripId===tid);
+    return {name,label:tripDateLabel(trip,byTrip[tid]),note:trip&&trip.note?trip.note:'',items:byTrip[tid],
+      sortKey:(trip&&trip.startedAt&&trip.startedAt.toDate)?trip.startedAt.toDate().getTime():0};
+  }).sort((a,b)=>b.sortKey-a.sortKey);
+  tripPDF(sections, (es?'Todos los viajes - ':'All trips - ')+name, 'empleado_'+name.replace(/\s+/g,'_')+'_completo');
+}
+
+// Shared PDF builder for trip sections
+function tripPDF(sections,title,baseName){
+  const es=lang==='es';
+  const { jsPDF }=window.jspdf;
+  const docp=new jsPDF({unit:'pt',format:'a4'});
+  const pageW=docp.internal.pageSize.getWidth();
+  let y=54;
+  docp.setFontSize(16);docp.setTextColor(20,20,20);
+  docp.text('Sacha Llakta - '+stripNonAscii(title),40,y);y+=20;
+  docp.setFontSize(10);docp.setTextColor(90,90,90);
+  docp.text((es?'Empresa: ':'Company: ')+stripNonAscii(companyData.company||''),40,y);y+=14;
+  docp.text((es?'Generado: ':'Generated: ')+new Date().toLocaleString(),40,y);y+=22;
+  let grand=0;
+  sections.forEach(sec=>{
+    if(y>760){docp.addPage();y=54;}
+    docp.setFontSize(12);docp.setTextColor(232,140,20);
+    docp.text('🧳 '.replace(/[^\x00-\x7F]/g,'')+stripNonAscii(sec.label),40,y);y+=16;
+    if(sec.note){docp.setFontSize(9);docp.setTextColor(110,110,110);
+      const noteLines=docp.splitTextToSize((es?'Nota: ':'Note: ')+stripNonAscii(sec.note),pageW-80);
+      docp.text(noteLines,40,y);y+=noteLines.length*12+2;}
+    docp.setFontSize(9);docp.setTextColor(255,255,255);docp.setFillColor(232,160,32);
+    docp.rect(40,y-10,pageW-80,16,'F');
+    docp.text(es?'Categoria':'Category',46,y+1);
+    docp.text(es?'Descripcion':'Description',160,y+1);
+    docp.text(es?'Monto':'Amount',pageW-90,y+1);
+    y+=18;
+    let sub=0;
+    docp.setTextColor(40,40,40);
+    sec.items.forEach((ex,i)=>{
+      if(y>790){docp.addPage();y=54;}
+      const cat=stripNonAscii(ex.catName||'-').slice(0,16);
+      const desc=stripNonAscii(ex.desc||'-').slice(0,34);
+      const monto=(ex.monto||0);sub+=monto;grand+=monto;
+      if(i%2===0){docp.setFillColor(245,245,245);docp.rect(40,y-10,pageW-80,16,'F');}
+      docp.text(cat,46,y+1);docp.text(desc,160,y+1);docp.text('$'+monto.toFixed(2),pageW-90,y+1);
+      y+=16;
+    });
+    docp.setFontSize(10);docp.setTextColor(20,20,20);
+    docp.text((es?'Subtotal: $':'Subtotal: $')+sub.toFixed(2),pageW-160,y+4);y+=26;
+  });
+  docp.setFontSize(12);docp.setTextColor(20,20,20);
+  if(y>780){docp.addPage();y=54;}
+  docp.text((es?'TOTAL: $':'TOTAL: $')+grand.toFixed(2),pageW-160,y);
+  docp.save(baseName+'_'+new Date().toISOString().slice(0,10)+'.pdf');
+  showToast(es?'✓ PDF descargado':'✓ PDF downloaded');
+}
 
 // ═══ TABS ═══
 function switchTab(name){
@@ -1647,6 +1945,9 @@ window.editAmount=editAmount;window.saveAmount=saveAmount;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
 window.toggleGroup=toggleGroup;window.confirmDeleteExpense=confirmDeleteExpense;window.deleteExpense=deleteExpense;
+window.toggleTrip=toggleTrip;window.editTripNote=editTripNote;window.saveTripNote=saveTripNote;
+window.downloadTripPDF=downloadTripPDF;window.downloadTripCSV=downloadTripCSV;
+window.downloadEmployeeAllPDF=downloadEmployeeAllPDF;window.downloadEmployeeAllCSV=downloadEmployeeAllCSV;
 window.confirmDeleteGroup=confirmDeleteGroup;window.deleteGroup=deleteGroup;window.forgotPassword=forgotPassword;
 
 applyLang();
