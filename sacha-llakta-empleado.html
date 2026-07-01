@@ -1970,14 +1970,21 @@ function showSheet(html){
   document.getElementById('modal-content').innerHTML=html;
   document.getElementById('modal-bg').style.display='flex';
 }
+let _modalCallbacks=[];
 function showCenterModal(icon,title,body,checklist,btns){
   let html=`<div class="modal-icon">${icon}</div><div class="modal-title">${title}</div><div class="modal-body">${body}</div>`;
   if(checklist){
     html+=`<ul class="modal-checklist">${checklist.map(c=>`<li><span>${c.icon}</span>${c.text}</li>`).join('')}</ul>`;
   }
-  html+=`<div class="btn-row">${btns.map(b=>`<button class="btn ${b.cls}" onclick="(${b.fn.toString()})()">${b.label}</button>`).join('')}</div>`;
+  // Store real callbacks so closures (e.g. captured `id`) keep working.
+  _modalCallbacks=btns.map(b=>b.fn);
+  html+=`<div class="btn-row">${btns.map((b,i)=>`<button class="btn ${b.cls}" onclick="runModalCallback(${i})">${b.label}</button>`).join('')}</div>`;
   document.getElementById('modal-center-content').innerHTML=html;
   document.getElementById('modal-center-bg').style.display='flex';
+}
+function runModalCallback(i){
+  const fn=_modalCallbacks[i];
+  if(typeof fn==='function') fn();
 }
 function closeModal(){
   document.getElementById('modal-bg').style.display='none';
