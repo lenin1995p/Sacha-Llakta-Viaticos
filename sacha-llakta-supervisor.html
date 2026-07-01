@@ -995,6 +995,7 @@ function renderReports(){
 
   el.innerHTML=groupArr.map(g=>{
     const open=expandedGroup===g.key;
+    const gEmp=employees.find(e=>e.id===g.key);
     let bodyHtml='';
     if(open){
       // Group this employee's expenses by tripId
@@ -1020,9 +1021,10 @@ function renderReports(){
         const tripKey=g.key+'::'+tg.tripId;
         const topen=expandedTrip===tripKey;
         const trip=tg.trip;
-        const statusBadge = trip&&trip.status==='active'
+        const isActiveTrip = gEmp && gEmp.tripActive && gEmp.currentTripId===tg.tripId;
+        const statusBadge = isActiveTrip
           ? `<span class="rg-tag" style="background:rgba(34,197,94,.15);color:var(--green);border-color:rgba(34,197,94,.3)">${es?'activo':'active'}</span>`
-          : '';
+          : `<span class="rg-tag" style="background:rgba(148,163,184,.12);color:var(--muted);border-color:rgba(148,163,184,.25)">${es?'finalizado':'finished'}</span>`;
         const note = trip&&trip.note ? `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:6px 10px;background:var(--surface2);border-radius:8px;margin:6px 0">📝 ${esc(trip.note)}</div>` : '';
         const itemsHtml = topen ? tg.items.map(ex=>{
           const color=ex.catColor||'#64748b';
@@ -1047,6 +1049,8 @@ function renderReports(){
             <button class="btn btn-ghost btn-sm" onclick="editTripNote('${tg.tripId}')">📝 ${es?'Nota del viaje':'Trip note'}</button>
             <button class="btn btn-ghost btn-sm" onclick="downloadTripPDF('${g.key}','${tg.tripId}')">📄 PDF</button>
             <button class="btn btn-ghost btn-sm" onclick="downloadTripCSV('${g.key}','${tg.tripId}')">📊 CSV</button>
+            ${(gEmp && !isActiveTrip)?`<button class="btn btn-ghost btn-sm" style="color:var(--green)" onclick="confirmReopenTrip('${g.key}','${tg.tripId}')">↩️ ${es?'Reabrir viaje':'Reopen trip'}</button>`:''}
+            <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteTrip('${g.key}','${tg.tripId}')">🗑️ ${es?'Eliminar viaje':'Delete trip'}</button>
           </div>` : '';
         return `<div class="report-group" style="margin:6px 0;border:1px solid var(--border);border-radius:10px">
           <button class="report-group-head" onclick="toggleTrip('${tripKey}')" style="padding:10px 12px">
@@ -1495,6 +1499,94 @@ async function saveTripNote(tripId){
     renderReports();
     showToast(es?'✓ Nota guardada':'✓ Note saved');
   }catch(e){showToast('Error: '+e.message);}
+}
+
+// ═══ REOPEN A FINISHED TRIP (supervisor / super-admin) ═══
+function confirmReopenTrip(empKey,tripId){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===empKey);
+  if(!emp){ showToast(es?'Empleado no encontrado.':'Employee not found.'); return; }
+  if(emp.tripActive){
+    showToast(es?'Este empleado ya tiene un viaje activo. Finalízalo antes de reabrir otro.':'This employee already has an active trip. Finish it before reopening another.');
+    return;
+  }
+  const {items}=gatherTrip(empKey,tripId);
+  const spent=items.reduce((s,e)=>s+(e.monto||0),0);
+  showModal(`
+    <div class="modal-icon">↩️</div>
+    <div class="modal-title">${es?'¿Reabrir este viaje?':'Reopen this trip?'}</div>
+    <div class="modal-body">${es?'El viaje volverá a estar activo con sus mismos datos':'The trip will become active again with its same data'} (${items.length} ${es?'gastos':'expenses'}, $${spent.toFixed(2)} ${es?'gastado':'spent'})${es?', como si nunca se hubiera finalizado. El empleado podrá seguir agregando gastos a este mismo viaje.':', as if it was never finished. The employee can keep adding expenses to this same trip.'}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-green" onclick="reopenTrip('${empKey}','${tripId}')">${es?'Reabrir':'Reopen'}</button>
+    </div>`);
+}
+async function reopenTrip(empKey,tripId){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===empKey);
+  if(!emp) return;
+  if(emp.tripActive){ showToast(es?'Ya tiene un viaje activo.':'Already has an active trip.'); return; }
+  const trip=trips.find(t=>t.tripId===tripId);
+  const amount=(trip&&typeof trip.assignedAmount==='number')?trip.assignedAmount
+    :((typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0));
+  try{
+    // Trip doc back to active
+    await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',tripId),{
+      status:'active', reopenedAt:FB.serverTimestamp(), endedAt:null
+    },{merge:true});
+    // Employee doc: resume this trip; command tells the employee app to restore it
+    const cmd={type:'reopen', tripId, amount, ts:Date.now()};
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',empKey),{
+      tripActive:true, currentTripId:tripId, assignedAmount:amount,
+      lastLeftover:0, lastTripId:null, supervisorCommand:cmd
+    });
+    closeModal();
+    renderReports();
+    showToast(es?'✓ Viaje reabierto':'✓ Trip reopened');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+// ═══ DELETE A TRIP AND ITS EXPENSES (supervisor / super-admin) ═══
+function confirmDeleteTrip(empKey,tripId){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===empKey);
+  const {items}=gatherTrip(empKey,tripId);
+  const isActive=emp&&emp.tripActive&&emp.currentTripId===tripId;
+  showModal(`
+    <div class="modal-icon">🗑️</div>
+    <div class="modal-title">${es?'¿Eliminar este viaje?':'Delete this trip?'}</div>
+    <div class="modal-body">${es?'Se borrará el viaje y sus':'This will delete the trip and its'} <b style="color:var(--text)">${items.length}</b> ${es?'gastos de forma permanente. Esto no se puede deshacer.':'expenses permanently. This cannot be undone.'}${isActive?`<br><br><b style="color:var(--red)">${es?'⚠️ Es el viaje ACTIVO del empleado.':'⚠️ This is the ACTIVE trip.'}</b>`:''}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-red" onclick="deleteTrip('${empKey}','${tripId}')">${es?'Eliminar':'Delete'}</button>
+    </div>`);
+}
+async function deleteTrip(empKey,tripId){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===empKey);
+  try{
+    // Delete all expenses of this trip
+    const toDelete=allExpenses.filter(ex=>ex.employeeId===empKey && (ex.tripId||'__notrip')===tripId);
+    for(const ex of toDelete){
+      try{ await FB.deleteDoc(FB.doc(FB.db,'companies',companyId,'expenses',ex.id)); }catch(e){}
+    }
+    // Delete the trip doc (skip if it's the synthetic "no trip" bucket)
+    if(tripId!=='__notrip'){
+      try{ await FB.deleteDoc(FB.doc(FB.db,'companies',companyId,'trips',tripId)); }catch(e){}
+    }
+    // If it was the employee's active trip, clear their trip state
+    if(emp && emp.tripActive && emp.currentTripId===tripId){
+      try{
+        await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',empKey),{
+          tripActive:false, currentTripId:null,
+          supervisorCommand:{type:'end', ts:Date.now()}
+        });
+      }catch(e){}
+    }
+    closeModal();
+    renderReports();
+    showToast(es?'✓ Viaje eliminado':'✓ Trip deleted');
+  }catch(e){ showToast('Error: '+e.message); }
 }
 
 // Helper: gather one trip's data (employee, trip meta, expenses)
@@ -2195,6 +2287,8 @@ window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=con
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
 window.toggleGroup=toggleGroup;window.confirmDeleteExpense=confirmDeleteExpense;window.deleteExpense=deleteExpense;
 window.toggleTrip=toggleTrip;window.editTripNote=editTripNote;window.saveTripNote=saveTripNote;
+window.confirmReopenTrip=confirmReopenTrip;window.reopenTrip=reopenTrip;
+window.confirmDeleteTrip=confirmDeleteTrip;window.deleteTrip=deleteTrip;
 window.downloadTripPDF=downloadTripPDF;window.downloadTripCSV=downloadTripCSV;
 window.downloadEmployeeAllPDF=downloadEmployeeAllPDF;window.downloadEmployeeAllCSV=downloadEmployeeAllCSV;
 window.confirmDeleteGroup=confirmDeleteGroup;window.deleteGroup=deleteGroup;window.forgotPassword=forgotPassword;

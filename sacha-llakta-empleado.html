@@ -796,6 +796,41 @@ async function createTripDoc(tripId){
   }catch(e){ console.warn('create trip doc failed',e); }
 }
 
+// Read back this trip's expenses from the cloud (source of truth) and map them to
+// the employee app's local expense shape. Used when a trip is reopened so the data
+// the supervisor holds is transferred back into the employee's app — even if the
+// employee deleted their local history or switched phones. Uses a one-time snapshot.
+function restoreTripExpensesFromCloud(tripId){
+  return new Promise((resolve)=>{
+    if(!fbReady||!S.linked||!S.companyId||!tripId){ resolve(null); return; }
+    try{
+      const q=FB.query(FB.collection(FB.db,'companies',S.companyId,'expenses'),FB.where('tripId','==',tripId));
+      let done=false;
+      const unsub=FB.onSnapshot(q,(snap)=>{
+        if(done) return; done=true;
+        const arr=[];
+        snap.forEach(d=>{
+          const x=d.data();
+          arr.push({
+            id: x.localId || (Date.now()+Math.floor(Math.random()*100000)),
+            desc: x.desc||'',
+            monto: x.monto||0,
+            cat: x.cat||'otro',
+            receipt: x.receipt||null,
+            fecha: (x.createdAt&&x.createdAt.toDate)
+              ? x.createdAt.toDate().toLocaleString(lang==='es'?'es-US':'en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+              : '',
+            cloudId: d.id
+          });
+        });
+        arr.sort((a,b)=>(b.id||0)-(a.id||0)); // newest first
+        try{ unsub(); }catch(e){}
+        resolve(arr);
+      },(err)=>{ console.warn('restore trip expenses failed',err); try{unsub();}catch(e){} resolve(null); });
+    }catch(e){ console.warn('restoreTripExpensesFromCloud',e); resolve(null); }
+  });
+}
+
 // Close the trip metadata doc when a trip ends.
 async function closeTripDoc(tripId,spent,leftover){
   if(!fbReady||!S.linked||!S.companyId||!tripId){
@@ -951,6 +986,36 @@ function applySupervisorDoc(d){
         changed=true;
         toast(lang==='es'?'Viáticos actualizados: $'+cmd.amount.toFixed(2):'Per-diem updated: $'+cmd.amount.toFixed(2));
       }
+    } else if(cmd.type==='reopen'){
+      // Supervisor/super-admin reopened a trip that was finalized by mistake.
+      // Resume the SAME trip with its same data, as if it was never ended.
+      S.tripActive=true;
+      S.currentTripId=cmd.tripId||S.currentTripId;
+      if(typeof cmd.amount==='number'&&cmd.amount>0) S.initialBalance=cmd.amount;
+      // Fallback: restore from local history if we still have it (instant, offline-safe)
+      let fallback=[];
+      const hi=(S.history||[]).findIndex(h=>h.tripId===cmd.tripId);
+      if(hi>=0){
+        const h=S.history[hi];
+        fallback=Array.isArray(h.gastos)?[...h.gastos]:[];
+        if(Array.isArray(h.categories)&&h.categories.length) S.categories=[...h.categories];
+        S.tripStart=h.tripStart||S.tripStart;
+        S.history.splice(hi,1);
+      }
+      S.gastos=fallback;
+      S.tripEnd=null;
+      changed=true;
+      toast(lang==='es'?'Tu supervisor reabrió tu viaje':'Your supervisor reopened your trip');
+      // Authoritative: pull this trip's expenses from the cloud. This works even if
+      // the employee deleted all their local trips or is on a new phone — the data
+      // the supervisor sees is transferred back into the employee's app.
+      restoreTripExpensesFromCloud(cmd.tripId).then(cloudArr=>{
+        if(Array.isArray(cloudArr) && S.currentTripId===cmd.tripId){
+          S.gastos=cloudArr;
+          save();
+          if(typeof render==='function') render();
+        }
+      });
     }
   }
 
