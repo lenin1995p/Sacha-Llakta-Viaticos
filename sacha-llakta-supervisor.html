@@ -718,6 +718,10 @@ function renderEmployees(){
       </div>
       <div class="emp-actions" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="copyCode('${esc(emp.code)}')">📋 ${lang==='es'?'Compartir':'Share'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="viewEmployeeInfo('${emp.id}')">👤 ${lang==='es'?'Info':'Info'}</button>
+      </div>
+      <div class="emp-actions" style="margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="confirmRegenCode('${emp.id}','${esc(emp.name)}')">🔄 ${lang==='es'?'Nuevo código':'New code'}</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteEmployee('${emp.id}','${esc(emp.name)}')">${lang==='es'?'Eliminar':'Delete'}</button>
       </div>
     </div>`;
@@ -1240,10 +1244,12 @@ function renderAccount(){
       <div class="acct-row"><span class="acct-k">${es?'Empresa':'Company'}</span><span class="acct-v">${esc(companyData.company)}</span></div>
       <div class="acct-row"><span class="acct-k">${es?'Supervisor':'Supervisor'}</span><span class="acct-v">${esc(companyData.supervisorName||'—')}</span></div>
       <div class="acct-row"><span class="acct-k">${es?'Correo':'Email'}</span><span class="acct-v">${esc(companyData.supervisorEmail||currentUser.email||'—')}</span></div>
+      <div class="acct-row"><span class="acct-k">${es?'Teléfono':'Phone'}</span><span class="acct-v">${companyData.supervisorPhone?esc(companyData.supervisorPhone):(es?'Sin teléfono':'No phone')}</span></div>
       <div class="acct-row"><span class="acct-k">${es?'Dirección / sede':'Address / location'}</span><span class="acct-v">${addrVal}</span></div>
       <div class="acct-row"><span class="acct-k">${es?'Empleados':'Employees'}</span><span class="acct-v">${empCount} / ${max}</span></div>
       <div class="acct-row"><span class="acct-k">${es?'Gastos registrados':'Recorded expenses'}</span><span class="acct-v">${expCount}</span></div>
-      <button class="btn btn-ghost acct-btn" style="margin-top:12px" onclick="editCompanyAddress()">📍 ${es?'Editar dirección / sede':'Edit address / location'}</button>
+      <button class="btn btn-ghost acct-btn" style="margin-top:12px" onclick="editSupervisorPhone()">📞 ${es?'Editar mi teléfono':'Edit my phone'}</button>
+      <button class="btn btn-ghost acct-btn" onclick="editCompanyAddress()">📍 ${es?'Editar dirección / sede':'Edit address / location'}</button>
     </div>
 
     ${planCardHtml}
@@ -1262,6 +1268,38 @@ function renderAccount(){
 
     <div style="text-align:center;font-size:11px;color:var(--muted);opacity:.6;margin-top:18px">Sacha Llakta · ${es?'Control de Viáticos':'Expense Control'}</div>
   `;
+}
+
+// ═══ EDIT SUPERVISOR PHONE ═══
+function editSupervisorPhone(){
+  const es=lang==='es';
+  const cur=companyData&&companyData.supervisorPhone?esc(companyData.supervisorPhone):'';
+  showModal(`
+    <div class="modal-icon">📞</div>
+    <div class="modal-title">${es?'Mi teléfono':'My phone'}</div>
+    <div class="modal-body">${es?'Tu teléfono será visible para tus empleados, para que puedan contactarte.':'Your phone will be visible to your employees so they can reach you.'}</div>
+    <div class="field">
+      <input class="input" id="edit-phone-val" type="tel" placeholder="${es?'Ej: +1 862 247 1247':'Ex: +1 862 247 1247'}" value="${cur}" autocomplete="off">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-rhino" onclick="saveSupervisorPhone()">${es?'Guardar':'Save'}</button>
+    </div>`);
+}
+async function saveSupervisorPhone(){
+  const es=lang==='es';
+  const val=document.getElementById('edit-phone-val').value.trim();
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId),{supervisorPhone:val});
+    companyData.supervisorPhone=val;
+    // Propagate to all employee docs so the employee app can show it
+    for(const emp of employees){
+      try{ await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',emp.id),{supervisorPhone:val,supervisorEmail:companyData.supervisorEmail||currentUser.email||''}); }catch(e){}
+    }
+    closeModal();
+    renderAccount();
+    showToast(es?'✓ Teléfono actualizado':'✓ Phone updated');
+  }catch(e){showToast('Error: '+e.message);}
 }
 
 // ═══ EDIT COMPANY ADDRESS ═══
@@ -1509,6 +1547,69 @@ function generateCode(company,name){
   const num=Math.floor(1000+Math.random()*9000);
   return `${cPart}-${nPart}-${num}`;
 }
+
+// ═══ REGENERATE CODE (lost code; keeps all employee data) ═══
+function confirmRegenCode(id,name){
+  const emp=employees.find(e=>e.id===id);
+  if(!emp)return;
+  const es=lang==='es';
+  showModal(`
+    <div class="modal-icon">🔄</div>
+    <div class="modal-title">${es?'Generar nuevo código':'Generate new code'}</div>
+    <div class="modal-body">${es?'Se creará un código nuevo para':'A new code will be created for'} <b style="color:var(--text)">${esc(name)}</b>. ${es?'El código anterior dejará de funcionar. Todos sus datos (viaje, gastos e historial) se conservan; al ingresar el nuevo código verá todo igual.':'The old code will stop working. All their data (trip, expenses and history) is kept; entering the new code shows everything intact.'}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-rhino" onclick="regenCode('${id}')">${es?'Generar':'Generate'}</button>
+    </div>`);
+}
+
+async function regenCode(id){
+  const emp=employees.find(e=>e.id===id);
+  if(!emp)return;
+  const es=lang==='es';
+  const oldCode=emp.code;
+  const newCode=generateCode(companyData.company,emp.name);
+  try{
+    // 1) Create the new code lookup doc (mirror the old one's data)
+    await FB.setDoc(FB.doc(FB.db,'codes',newCode),{
+      companyId, companyName:companyData.company,
+      employeeName:emp.name, employeeId:emp.id,
+      assignedAmount:(typeof emp.assignedAmount==='number'?emp.assignedAmount:0)
+    });
+    // 2) Point the employee doc at the new code
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{code:newCode});
+    // 3) Delete the old code lookup doc (invalidates old code)
+    if(oldCode){ try{ await FB.deleteDoc(FB.doc(FB.db,'codes',oldCode)); }catch(e){} }
+    closeModal();
+    showCodeModal(emp.name,newCode);
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+// ═══ VIEW EMPLOYEE CONTACT INFO (PII — supervisor only) ═══
+function viewEmployeeInfo(id){
+  const emp=employees.find(e=>e.id===id);
+  if(!emp)return;
+  const es=lang==='es';
+  const row=(k,v)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--muted);font-size:13px">${k}</span>
+      <span style="color:var(--text);font-size:13px;text-align:right;font-weight:600">${v?esc(v):'—'}</span></div>`;
+  showModal(`
+    <div class="modal-icon">👤</div>
+    <div class="modal-title">${esc(emp.name)}</div>
+    <div style="margin:8px 0 4px">
+      ${row(es?'Cargo':'Role',emp.role)}
+      ${row(es?'Código':'Code',emp.code)}
+      ${row(es?'Teléfono':'Phone',emp.phone)}
+      ${row(es?'Correo':'Email',emp.email)}
+      ${row(es?'Dirección':'Address',emp.homeAddress)}
+      ${row(es?'Contacto de emergencia':'Emergency contact',emp.emergencyContact)}
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin:10px 0;line-height:1.5">${es?'El empleado completa estos datos en su app (Configuración › Perfil).':'The employee fills these in their app (Settings › Profile).'}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cerrar':'Close'}</button>
+    </div>`);
+}
+
 function formatTime(d){
   const now=new Date();const diff=(now-d)/1000;
   if(diff<60)return lang==='es'?'hace un momento':'just now';
@@ -1522,12 +1623,14 @@ function formatDate(d){return d.toLocaleDateString(lang==='es'?'es-US':'en-US',{
 window.switchLoginTab=switchLoginTab;window.doRegister=doRegister;window.doLogin=doLogin;window.doLogout=doLogout;
 window.switchTab=switchTab;window.toggleLang=toggleLang;window.showAddEmployee=showAddEmployee;window.saveEmployee=saveEmployee;
 window.confirmDeleteEmployee=confirmDeleteEmployee;window.deleteEmployee=deleteEmployee;window.viewReceipt=viewReceipt;
+window.confirmRegenCode=confirmRegenCode;window.regenCode=regenCode;window.viewEmployeeInfo=viewEmployeeInfo;
 window.exportExcel=exportExcel;window.setFilter=setFilter;window.copyCode=copyCode;window.closeModal=closeModal;
 window.renderAccount=renderAccount;window.showPlans=showPlans;window.planComingSoon=planComingSoon;window.confirmNewCompany=confirmNewCompany;
 window.proceedNewCompany=proceedNewCompany;window.downloadAccountPDF=downloadAccountPDF;
 window.confirmCancelSubscription=confirmCancelSubscription;window.reallyCancelSubscription=reallyCancelSubscription;
 window.finishCancel=finishCancel;
 window.editCompanyAddress=editCompanyAddress;window.saveCompanyAddress=saveCompanyAddress;window.adminGrantPlan=adminGrantPlan;
+window.editSupervisorPhone=editSupervisorPhone;window.saveSupervisorPhone=saveSupervisorPhone;
 window.editAmount=editAmount;window.saveAmount=saveAmount;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
