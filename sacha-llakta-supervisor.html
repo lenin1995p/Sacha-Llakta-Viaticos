@@ -1093,9 +1093,15 @@ async function confirmSupervisorEnd(id){
   if(!emp)return;
   const es=lang==='es';
   try{
+    // Compute the leftover of the trip being ended, so it can be offered
+    // on the next trip — independent of whether the employee app is open.
+    const empExpenses=allExpenses.filter(ex=>ex.employeeId===emp.id);
+    const spent=empExpenses.reduce((s,e)=>s+(e.monto||0),0);
+    const assigned=(typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0);
+    const leftover=Math.max(0, Math.round((assigned-spent)*100)/100);
     const cmd={type:'end',ts:Date.now()};
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
-      tripActive:false, supervisorCommand:cmd
+      tripActive:false, supervisorCommand:cmd, lastLeftover:leftover
     });
     closeModal();
     showToast(es?'✓ Viaje finalizado':'✓ Trip ended');
@@ -1265,6 +1271,12 @@ function renderAccount(){
     </div>
 
     ${dangerHtml}
+
+    <div class="acct-card">
+      <div class="acct-plan-label">${es?'SOPORTE TÉCNICO':'TECHNICAL SUPPORT'}</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px">${es?'¿Necesitas ayuda o tienes una sugerencia? Escríbenos por WhatsApp.':'Need help or have a suggestion? Message us on WhatsApp.'}</div>
+      <a href="https://wa.me/18622471247" target="_blank" rel="noopener" class="btn btn-ghost acct-btn" style="display:block;text-align:center;text-decoration:none;color:#25d366">💬 ${es?'Contactar soporte':'Contact support'}</a>
+    </div>
 
     <div style="text-align:center;font-size:11px;color:var(--muted);opacity:.6;margin-top:18px">Sacha Llakta · ${es?'Control de Viáticos':'Expense Control'}</div>
   `;
