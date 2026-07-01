@@ -741,6 +741,7 @@ async function syncExpenseToCloud(gasto){
       employeeId:S.employeeId,
       employeeName:S.employee,
       employeeCode:S.employeeCode,
+      tripId:S.currentTripId||null,
       desc:gasto.desc,
       monto:gasto.monto,
       cat:gasto.cat,
@@ -770,9 +771,44 @@ async function syncTripStatus(){
     await FB.updateDoc(FB.doc(FB.db,'companies',S.companyId,'employees',S.employeeId),{
       tripActive:S.tripActive,
       initialBalance:S.initialBalance,
-      tripStart:S.tripStart||null
+      tripStart:S.tripStart||null,
+      currentTripId:S.currentTripId||null
     });
   }catch(e){ console.warn('sync trip status failed',e); }
+}
+
+// Create the trip metadata doc in the cloud (trips subcollection) when a trip starts.
+async function createTripDoc(tripId){
+  if(!fbReady||!S.linked||!S.companyId||!S.employeeId||!tripId){
+    queueSync(()=>createTripDoc(tripId));return;
+  }
+  try{
+    await FB.setDoc(FB.doc(FB.db,'companies',S.companyId,'trips',tripId),{
+      tripId,
+      employeeId:S.employeeId,
+      employeeName:S.employee,
+      company:S.company||'',
+      assignedAmount:S.initialBalance||0,
+      status:'active',
+      startedAt:FB.serverTimestamp(),
+      note:''
+    },{merge:true});
+  }catch(e){ console.warn('create trip doc failed',e); }
+}
+
+// Close the trip metadata doc when a trip ends.
+async function closeTripDoc(tripId,spent,leftover){
+  if(!fbReady||!S.linked||!S.companyId||!tripId){
+    queueSync(()=>closeTripDoc(tripId,spent,leftover));return;
+  }
+  try{
+    await FB.setDoc(FB.doc(FB.db,'companies',S.companyId,'trips',tripId),{
+      status:'ended',
+      spent:Math.round((spent||0)*100)/100,
+      leftover:Math.round((leftover||0)*100)/100,
+      endedAt:FB.serverTimestamp()
+    },{merge:true});
+  }catch(e){ console.warn('close trip doc failed',e); }
 }
 
 // Write the leftover balance from the just-finished trip to the cloud,
@@ -893,7 +929,7 @@ function applySupervisorDoc(d){
     if(cmd.type==='start'){
       if(!S.tripActive){
         if(typeof cmd.amount==='number'&&cmd.amount>0) S.initialBalance=cmd.amount;
-        applyRemoteStartTrip();
+        applyRemoteStartTrip(cmd.tripId||null);
         changed=true;
         toast(lang==='es'?'Tu supervisor inició tu viaje':'Your supervisor started your trip');
       }
@@ -934,9 +970,10 @@ function toast(msg){
 }
 
 // Start a trip because the supervisor commanded it (no re-sync back up)
-function applyRemoteStartTrip(){
+function applyRemoteStartTrip(tripId){
   S.tripActive=true;
   S.tripStart=new Date().toLocaleString(lang==='es'?'es-US':'en-US',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  S.currentTripId=tripId||('trip_'+Date.now()+'_'+Math.random().toString(36).slice(2,7));
   S.gastos=[];
   S.tripEnd=null;
 }
@@ -953,11 +990,14 @@ function applyRemoteEndTrip(){
     initialBalance:S.initialBalance,
     totalSpent,balance:S.initialBalance-totalSpent,
     tripStart:S.tripStart,tripEnd:S.tripEnd,
+    tripId:S.currentTripId||null,
     gastos:[...S.gastos],
     categories:[...S.categories]
   });
-  S.tripActive=false;S.tripStart=null;S.tripEnd=null;S.gastos=[];
+  const endedTripId=S.currentTripId;
+  S.tripActive=false;S.tripStart=null;S.tripEnd=null;S.gastos=[];S.currentTripId=null;
   syncLeftover(leftoverNow);
+  if(endedTripId) closeTripDoc(endedTripId,totalSpent,leftoverNow);
 }
 
 let expulsionShown=false;
@@ -1461,10 +1501,11 @@ function showEndTripModal(){
 function startTrip(){
   S.tripActive=true;
   S.tripStart=new Date().toLocaleString(lang==='es'?'es-US':'en-US',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  S.currentTripId='trip_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
   S.gastos=[];
   S.tripEnd=null;
   save();closeModal();render();
-  if(S.linked) syncTripStatus();
+  if(S.linked){ syncTripStatus(); createTripDoc(S.currentTripId); }
 }
 
 function endTrip(){
@@ -1480,12 +1521,14 @@ function endTrip(){
     initialBalance:S.initialBalance,
     totalSpent,balance:S.initialBalance-totalSpent,
     tripStart:S.tripStart,tripEnd:S.tripEnd,
+    tripId:S.currentTripId||null,
     gastos:[...S.gastos],
     categories:[...S.categories]
   });
-  S.tripActive=false;S.tripStart=null;S.tripEnd=null;S.gastos=[];
+  const endedTripId=S.currentTripId;
+  S.tripActive=false;S.tripStart=null;S.tripEnd=null;S.gastos=[];S.currentTripId=null;
   save();render();
-  if(S.linked){ syncTripStatus(); syncLeftover(S.initialBalance-totalSpent); }
+  if(S.linked){ syncTripStatus(); syncLeftover(S.initialBalance-totalSpent); if(endedTripId) closeTripDoc(endedTripId,totalSpent,S.initialBalance-totalSpent); }
   // Ask about new trip
   setTimeout(()=>showNewTripModal(),600);
 }
