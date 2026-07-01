@@ -394,8 +394,46 @@ textarea.input{resize:none;min-height:70px}
           <div class="field-label" data-i="saldo-inicial">Saldo Inicial ($)</div>
           <div class="input-prefix"><span class="pfx">$</span><input class="input" id="cfg-balance" type="number" min="1" step="0.01"></div>
         </div>
+        <hr class="divider">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:10px" data-i="datos-contacto-desc">Estos datos son visibles para tu supervisor.</div>
+        <div class="field">
+          <div class="field-label" data-i="tel-empleado">Teléfono</div>
+          <input class="input" id="cfg-phone" type="tel" autocomplete="off">
+        </div>
+        <div class="field">
+          <div class="field-label" data-i="email-empleado">Correo</div>
+          <input class="input" id="cfg-email" type="email" autocomplete="off">
+        </div>
+        <div class="field">
+          <div class="field-label" data-i="direccion-empleado">Dirección de vivienda</div>
+          <input class="input" id="cfg-home-address" autocomplete="off">
+        </div>
+        <div class="field">
+          <div class="field-label" data-i="emergencia-empleado">Contacto de emergencia</div>
+          <input class="input" id="cfg-emergency" autocomplete="off">
+        </div>
         <button class="btn btn-rhino" onclick="saveConfig()" data-i="guardar-config">💾 Guardar Configuración</button>
         <div id="cfg-saved-msg" style="display:none;text-align:center;color:var(--green);font-size:13px;font-weight:700;margin-top:10px" data-i="guardado">✓ Guardado</div>
+      </div>
+
+      <!-- CONTACTO DE LA EMPRESA / SUPERVISOR (solo si está vinculado) -->
+      <div class="card" id="cfg-supervisor-card" style="display:none">
+        <div class="card-title" data-i="contacto-empresa">Contacto de la empresa</div>
+        <div id="cfg-supervisor-info"></div>
+      </div>
+
+      <!-- SESIÓN -->
+      <div class="card" id="cfg-session-card" style="display:none">
+        <div class="card-title" data-i="sesion">Sesión</div>
+        <div style="font-size:12px;color:var(--dim);line-height:1.5;margin-bottom:12px" data-i="salir-desc">Al salir, este teléfono se desvincula pero tus datos quedan guardados en la nube. Para volver, ingresa tu código de nuevo y recuperarás todo.</div>
+        <button class="btn btn-ghost" onclick="confirmLogoutEmployee()" style="color:var(--rhino)" data-i="salir-btn">🚪 Salir / Cerrar sesión</button>
+      </div>
+
+      <!-- SOPORTE -->
+      <div class="card">
+        <div class="card-title" data-i="soporte">Soporte técnico</div>
+        <div style="font-size:12px;color:var(--dim);line-height:1.5;margin-bottom:12px" data-i="soporte-desc">¿Necesitas ayuda? Escríbenos por WhatsApp y te asistimos.</div>
+        <a href="https://wa.me/18622471247" target="_blank" rel="noopener" class="btn btn-ghost" style="display:block;text-align:center;text-decoration:none;color:#25d366" data-i="soporte-btn">💬 Contactar soporte</a>
       </div>
     </div>
 
@@ -510,7 +548,18 @@ const T = {
     'copiar-respaldo':'Copiar datos como respaldo',
     'pegar-notas':'Pega en notas o correo para no perder info',
     'nav-gastos':'Gastos','nav-stats':'Stats','nav-historial':'Historial','nav-config':'Config',
-    'setup-sub':'Tu gestor profesional de gastos de viaje',
+    'sesion':'Sesión',
+    'datos-contacto-desc':'Estos datos son visibles para tu supervisor.',
+    'tel-empleado':'Teléfono',
+    'email-empleado':'Correo',
+    'direccion-empleado':'Dirección de vivienda',
+    'emergencia-empleado':'Contacto de emergencia',
+    'contacto-empresa':'Contacto de la empresa',
+    'salir-desc':'Al salir, este teléfono se desvincula pero tus datos quedan guardados en la nube. Para volver, ingresa tu código de nuevo y recuperarás todo.',
+    'salir-btn':'🚪 Salir / Cerrar sesión',
+    'soporte':'Soporte técnico',
+    'soporte-desc':'¿Necesitas ayuda? Escríbenos por WhatsApp y te asistimos.',
+    'soporte-btn':'💬 Contactar soporte',
     'setup-note':'Los datos se guardan localmente en tu dispositivo',
     'btn-continue':'Continuar →',
     'lbl-company':'Empresa','lbl-employee':'Empleado','lbl-balance':'Saldo inicial',
@@ -553,6 +602,18 @@ const T = {
     'copiar-respaldo':'Copy data as backup',
     'pegar-notas':'Paste in notes or email to keep your data',
     'nav-gastos':'Expenses','nav-stats':'Stats','nav-historial':'History','nav-config':'Settings',
+    'sesion':'Session',
+    'datos-contacto-desc':'This information is visible to your supervisor.',
+    'tel-empleado':'Phone',
+    'email-empleado':'Email',
+    'direccion-empleado':'Home address',
+    'emergencia-empleado':'Emergency contact',
+    'contacto-empresa':'Company contact',
+    'salir-desc':'When you log out, this phone is unlinked but your data stays saved in the cloud. To return, enter your code again and you will recover everything.',
+    'salir-btn':'🚪 Log out',
+    'soporte':'Technical support',
+    'soporte-desc':'Need help? Message us on WhatsApp and we will assist you.',
+    'soporte-btn':'💬 Contact support',
     'setup-sub':'Your professional travel expense manager',
     'setup-note':'Data is saved locally on your device',
     'btn-continue':'Continue →',
@@ -799,9 +860,17 @@ function applySupervisorDoc(d){
   if(!d) return;
   let changed=false;
 
-  // --- Company address (cosmetic) ---
+  // --- Company address + supervisor contact (cosmetic) ---
   if(typeof d.companyAddress==='string' && d.companyAddress!==(S.companyAddress||'')){
     S.companyAddress=d.companyAddress;
+    changed=true;
+  }
+  if(typeof d.supervisorPhone==='string' && d.supervisorPhone!==(S.supervisorPhone||'')){
+    S.supervisorPhone=d.supervisorPhone;
+    changed=true;
+  }
+  if(typeof d.supervisorEmail==='string' && d.supervisorEmail!==(S.supervisorEmail||'')){
+    S.supervisorEmail=d.supervisorEmail;
     changed=true;
   }
 
@@ -1539,24 +1608,98 @@ function renderConfig(){
   document.getElementById('cfg-company').value=S.company||'';
   document.getElementById('cfg-employee').value=S.employee||'';
   document.getElementById('cfg-balance').value=S.initialBalance||'';
+  const pw=document.getElementById('cfg-phone'); if(pw) pw.value=S.empPhone||'';
+  const ew=document.getElementById('cfg-email'); if(ew) ew.value=S.empEmail||'';
+  const hw=document.getElementById('cfg-home-address'); if(hw) hw.value=S.empHomeAddress||'';
+  const emg=document.getElementById('cfg-emergency'); if(emg) emg.value=S.empEmergency||'';
   ['cfg-company','cfg-employee','cfg-balance'].forEach(id=>{
     const el=document.getElementById(id);
     el.disabled=locked;el.style.opacity=locked?.4:1;
   });
+  // Session card (Salir) only makes sense when linked to a company via code
+  const sc=document.getElementById('cfg-session-card');
+  if(sc) sc.style.display=(S.linked&&S.employeeCode)?'block':'none';
+  // Supervisor contact card (only when linked and we have some info)
+  const svc=document.getElementById('cfg-supervisor-card');
+  if(svc){
+    const hasInfo=S.linked&&(S.company||S.companyAddress||S.supervisorPhone||S.supervisorEmail);
+    svc.style.display=hasInfo?'block':'none';
+    if(hasInfo){
+      const es=lang==='es';
+      const rows=[];
+      if(S.company) rows.push([es?'Empresa':'Company',esc(S.company),null]);
+      if(S.companyAddress) rows.push([es?'Dirección':'Address',esc(S.companyAddress),null]);
+      if(S.supervisorEmail) rows.push([es?'Correo':'Email',esc(S.supervisorEmail),'mailto:'+S.supervisorEmail]);
+      if(S.supervisorPhone) rows.push([es?'Teléfono':'Phone',esc(S.supervisorPhone),'tel:'+S.supervisorPhone.replace(/[^0-9+]/g,'')]);
+      const el=document.getElementById('cfg-supervisor-info');
+      if(el){
+        el.innerHTML=rows.map(([k,v,link])=>
+          `<div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+            <span style="color:var(--dim);font-size:13px">${k}</span>
+            ${link?`<a href="${link}" style="color:var(--rhino);font-size:13px;text-align:right;text-decoration:none;font-weight:600">${v}</a>`:`<span style="color:var(--text);font-size:13px;text-align:right;font-weight:600">${v}</span>`}
+          </div>`).join('');
+      }
+    }
+  }
   if(currentCfgTab==='cats') renderCatManager();
 }
 
+// ═══ EMPLOYEE LOGOUT (unlink this device only; cloud data stays) ═══
+function confirmLogoutEmployee(){
+  const es=lang==='es';
+  showCenterModal('🚪',
+    es?'¿Cerrar sesión?':'Log out?',
+    es?'Este teléfono se desvinculará, pero tus datos (viaje, gastos e historial) quedan guardados en la nube. Para volver, ingresa tu mismo código y recuperarás todo.':'This phone will be unlinked, but your data (trip, expenses and history) stays saved in the cloud. To return, enter your same code and you will recover everything.',
+    null,
+    [{label:es?'Cancelar':'Cancel',cls:'btn-ghost',fn:()=>closeModal()},
+     {label:es?'Cerrar sesión':'Log out',cls:'btn-rhino',fn:()=>doLogoutEmployee()}]);
+}
+
+function doLogoutEmployee(){
+  // Stop cloud listeners
+  try{ stopWatchdog(); }catch(e){}
+  // Wipe ONLY local state on this device. Cloud (Firestore) is untouched.
+  try{ localStorage.removeItem(SK); }catch(e){}
+  // Reload so the app returns to the code / setup screen fresh
+  location.reload();
+}
+
 function saveConfig(){
-  if(S.tripActive) return;
-  const company=document.getElementById('cfg-company').value.trim();
-  const employee=document.getElementById('cfg-employee').value.trim();
-  const bal=parseFloat(document.getElementById('cfg-balance').value);
-  if(!company||!employee){alert(lang==='es'?'Completa empresa y empleado.':'Fill company and employee.');return;}
-  if(isNaN(bal)||bal<=0){alert(lang==='es'?'Presupuesto inválido.':'Invalid budget.');return;}
-  S.company=company;S.employee=employee;S.initialBalance=bal;save();renderHeader();
+  // Contact/PII fields can be edited even during an active trip.
+  const phone=(document.getElementById('cfg-phone')||{}).value?.trim()||'';
+  const email=(document.getElementById('cfg-email')||{}).value?.trim()||'';
+  const homeAddress=(document.getElementById('cfg-home-address')||{}).value?.trim()||'';
+  const emergency=(document.getElementById('cfg-emergency')||{}).value?.trim()||'';
+  S.empPhone=phone; S.empEmail=email; S.empHomeAddress=homeAddress; S.empEmergency=emergency;
+
+  // Company / employee / balance are locked during an active trip.
+  if(!S.tripActive){
+    const company=document.getElementById('cfg-company').value.trim();
+    const employee=document.getElementById('cfg-employee').value.trim();
+    const bal=parseFloat(document.getElementById('cfg-balance').value);
+    if(!company||!employee){alert(lang==='es'?'Completa empresa y empleado.':'Fill company and employee.');return;}
+    if(isNaN(bal)||bal<=0){alert(lang==='es'?'Presupuesto inválido.':'Invalid budget.');return;}
+    S.company=company;S.employee=employee;S.initialBalance=bal;
+  }
+  save();renderHeader();
+  // Push contact info up to the cloud so the supervisor can see it.
+  if(S.linked) syncEmployeeInfo();
   const msg=document.getElementById('cfg-saved-msg');
   msg.style.display='block';setTimeout(()=>msg.style.display='none',2500);
   applyTranslations();
+}
+
+// Sync the employee's contact/PII up to their cloud employee doc.
+async function syncEmployeeInfo(){
+  if(!fbReady||!S.linked||!S.companyId||!S.employeeId){
+    queueSync(()=>syncEmployeeInfo());return;
+  }
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',S.companyId,'employees',S.employeeId),{
+      phone:S.empPhone||'', email:S.empEmail||'',
+      homeAddress:S.empHomeAddress||'', emergencyContact:S.empEmergency||''
+    });
+  }catch(e){ console.warn('sync employee info failed',e); }
 }
 
 function renderCatManager(){
