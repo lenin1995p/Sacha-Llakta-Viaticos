@@ -927,12 +927,18 @@ function applySupervisorDoc(d){
     lastCommandTs=cmd.ts;
     S.lastCommandTs=cmd.ts;
     if(cmd.type==='start'){
+      // A start command is authoritative about the amount. Apply it even if a
+      // trip somehow already looks active locally (covers end+start races and
+      // leftover roll-over, so the summed amount is never lost).
+      if(typeof cmd.amount==='number'&&cmd.amount>0) S.initialBalance=cmd.amount;
       if(!S.tripActive){
-        if(typeof cmd.amount==='number'&&cmd.amount>0) S.initialBalance=cmd.amount;
         applyRemoteStartTrip(cmd.tripId||null);
-        changed=true;
         toast(lang==='es'?'Tu supervisor inició tu viaje':'Your supervisor started your trip');
+      } else {
+        // Trip already active locally: adopt the new tripId if provided
+        if(cmd.tripId) S.currentTripId=cmd.tripId;
       }
+      changed=true;
     } else if(cmd.type==='end'){
       if(S.tripActive){
         applyRemoteEndTrip();

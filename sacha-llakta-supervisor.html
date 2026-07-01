@@ -694,7 +694,11 @@ function renderEmployees(){
     return;
   }
   el.innerHTML=employees.map(emp=>{
-    const empExpenses=allExpenses.filter(ex=>ex.employeeId===emp.id);
+    // Count only the CURRENT trip's expenses (by tripId) so the amount + leftover
+    // roll-over shows correctly. Falls back to all expenses if no current trip.
+    const empExpenses=emp.currentTripId
+      ? allExpenses.filter(ex=>ex.employeeId===emp.id && ex.tripId===emp.currentTripId)
+      : allExpenses.filter(ex=>ex.employeeId===emp.id);
     const total=empExpenses.reduce((s,e)=>s+(e.monto||0),0);
     const assigned=(typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0);
     const remaining=assigned-total;
