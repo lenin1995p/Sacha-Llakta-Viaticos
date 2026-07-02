@@ -186,6 +186,18 @@ body{padding-bottom:80px}
 .plan-price{font-size:30px;font-weight:800;color:var(--rhino);margin:4px 0 12px}
 .plan-price span{font-size:14px;color:var(--muted);font-weight:600}
 .plan-feat{font-size:13px;color:var(--text);margin-bottom:6px;line-height:1.4}
+/* ── Activation gate ── */
+.gate-plans{display:flex;gap:8px;margin:4px 0 6px}
+.gate-plan{position:relative;flex:1;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 8px;text-align:center}
+.gate-plan.gate-pop{border-color:var(--rhino);box-shadow:0 0 0 1px var(--rhino)}
+.gate-badge{position:absolute;top:-8px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,var(--rhino),var(--rhino2));color:#0a0f1e;font-size:8px;font-weight:800;letter-spacing:.5px;padding:2px 7px;border-radius:20px;white-space:nowrap}
+.gate-plan-name{font-size:12px;font-weight:800;color:var(--text)}
+.gate-plan-price{font-size:19px;font-weight:800;color:var(--rhino);margin:2px 0}
+.gate-plan-price span{font-size:10px;color:var(--muted);font-weight:600}
+.gate-plan-max{font-size:10px;color:var(--muted);margin-bottom:8px;line-height:1.3}
+.gate-plan-btn{width:100%;font-size:12px;padding:8px 4px;display:block;text-align:center;text-decoration:none}
+.gate-or{text-align:center;font-size:12px;color:var(--muted);margin:12px 0}
+.gate-vip{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
 </style>
 </head>
 <body>
@@ -385,13 +397,17 @@ const PLANS = {
   enterprise: { id:'enterprise', name:'Empresa', nameEn:'Enterprise', price:59.99, maxEmployees:Infinity,
                 support:'Soporte dedicado + onboarding personalizado', supportEn:'Dedicated support + personalized onboarding' },
   admin:      { id:'admin', name:'Admin', nameEn:'Admin', price:0, maxEmployees:Infinity, support:'Cuenta de administrador', supportEn:'Administrator account' },
+  vip:        { id:'vip', name:'VIP (acceso ilimitado)', nameEn:'VIP (unlimited access)', price:0, maxEmployees:Infinity, support:'Acceso ilimitado de cortesía', supportEn:'Complimentary unlimited access' },
+  pending:    { id:'pending', name:'Sin activar', nameEn:'Not activated', price:0, maxEmployees:0, support:'Elige un plan para empezar', supportEn:'Choose a plan to start' },
+  expired:    { id:'expired', name:'Prueba terminada', nameEn:'Trial ended', price:0, maxEmployees:0, support:'Elige un plan para continuar', supportEn:'Choose a plan to continue' },
   cancelled:  { id:'cancelled', name:'Cancelada', nameEn:'Cancelled', price:0, maxEmployees:0, support:'—' }
 };
 
 function currentPlan(){
   if(typeof isAdminUser==='function' && isAdminUser()) return PLANS.admin;
-  if(!companyData) return PLANS.trial;
-  return PLANS[companyData.plan] || PLANS.trial;
+  if(typeof isVipCompany==='function' && isVipCompany()) return PLANS.vip;
+  if(!companyData) return PLANS.pending;
+  return PLANS[companyData.plan] || PLANS.pending;
 }
 function planMaxEmployees(){
   return currentPlan().maxEmployees;
@@ -476,12 +492,38 @@ let myName='';
 // ════════════════════════════════════════
 // ADMIN + ACCESO (complementa PLANS/STRIPE_LINKS de arriba)
 // ════════════════════════════════════════
-// Tu correo de administrador (Sacha Llakta): acceso gratis ilimitado, sin pagar.
-const ADMIN_EMAILS = ['lenin1995p@icloud.com'];
+// Correos del dueño/fundador (Sacha Llakta): acceso gratis ilimitado, sin candado,
+// con TODAS las funciones (incluye generar códigos VIP). Puedes entrar con cualquiera.
+const ADMIN_EMAILS = ['lenin1995p@icloud.com','leninp@sachallakta.com','lenin1995p@gmail.com'];
 
 function isAdminUser(){
   const em=((currentUser&&currentUser.email)||'').toLowerCase();
   return ADMIN_EMAILS.map(e=>e.toLowerCase()).includes(em);
+}
+
+// ¿Esta empresa tiene acceso VIP gratis de por vida? (activado con un código SLLVIP)
+function isVipCompany(){
+  return !!(companyData && companyData.vip===true);
+}
+
+// ¿La empresa ya eligió una opción de acceso? (plan pagado, trial vigente, VIP, o founder)
+// Si NO, la app queda bloqueada mostrando la pantalla de selección.
+function hasChosenAccess(){
+  if(isAdminUser()) return true;
+  if(isVipCompany()) return true;
+  if(!companyData) return false;
+  const plan=companyData.plan;
+  // 'pending' = recién creada, aún sin elegir nada → candado
+  if(!plan || plan==='pending') return false;
+  return true;
+}
+
+// Genera un código VIP seguro de un solo uso: SLLVIP-XXXXXX (sin caracteres ambiguos)
+function genVipCode(){
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin O/0/I/1/L para evitar confusión
+  let s='';
+  for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
+  return 'SLLVIP-'+s;
 }
 
 // Days left in trial (null if not on trial)
@@ -498,7 +540,10 @@ function trialDaysLeft(){
 // Is the company allowed to use the panel right now?
 function hasAccess(){
   if(isAdminUser()) return true;
+  if(isVipCompany()) return true;
   const plan=currentPlan().id;
+  if(plan==='pending') return false;   // recién creada, aún sin elegir
+  if(plan==='expired') return false;   // prueba terminada, debe elegir plan
   if(plan==='cancelled') return false;
   if(plan==='trial'){ return trialDaysLeft()>0; }
   return true; // basic/pro/empresa = paid
@@ -547,7 +592,7 @@ async function doRegister(){
     await FB.setDoc(FB.doc(FB.db,'companies',uid),{
       company, supervisorName:name, supervisorEmail:email, address:address||'',
       createdAt:FB.serverTimestamp(),
-      plan:'trial', planStart:FB.serverTimestamp()
+      plan:'pending'   // queda bloqueada hasta elegir plan / trial / código VIP
     });
     // Reserve a shareable company code so other supervisors can join later
     try{
@@ -562,6 +607,81 @@ async function doRegister(){
     err.textContent=msg;err.style.display='block';
     btn.disabled=false;btn.textContent=lang==='es'?'Crear empresa':'Create company';
   }
+}
+
+// ═══ GENERAR CÓDIGO VIP (solo founder/admin) ═══
+async function generateVipCodeNow(){
+  const es=lang==='es';
+  if(!isAdminUser()){ showToast(es?'Solo el dueño puede generar códigos VIP.':'Only the owner can generate VIP codes.'); return; }
+  try{
+    // Generar uno único (reintenta si por casualidad ya existe)
+    let code, exists=true, tries=0;
+    while(exists && tries<5){
+      code=genVipCode(); tries++;
+      const s=await FB.getDoc(FB.doc(FB.db,'vipCodes',code));
+      exists=s.exists();
+    }
+    await FB.setDoc(FB.doc(FB.db,'vipCodes',code),{
+      code, used:false, revoked:false,
+      createdBy:(currentUser&&currentUser.email)||'', createdAt:FB.serverTimestamp()
+    });
+    showToast(es?'✓ Código VIP creado':'✓ VIP code created');
+    loadVipCodesList();
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+async function loadVipCodesList(){
+  const box=document.getElementById('vip-codes-list');
+  if(!box||!isAdminUser()) return;
+  const es=lang==='es';
+  try{
+    const qs=await FB.getDocs(FB.query(FB.collection(FB.db,'vipCodes'),FB.orderBy('createdAt','desc')));
+    const rows=[];
+    qs.forEach(d=>rows.push({id:d.id,...d.data()}));
+    if(!rows.length){ box.innerHTML=`<div style="font-size:12px;color:var(--muted);text-align:center;padding:6px">${es?'Aún no has creado códigos.':'No codes yet.'}</div>`; return; }
+    box.innerHTML=rows.map(r=>{
+      const status = r.revoked ? (es?'anulado':'revoked')
+        : r.used ? (es?`usado por ${esc(r.usedByCompany||'—')}`:`used by ${esc(r.usedByCompany||'—')}`)
+        : (es?'disponible':'available');
+      const color = r.revoked?'var(--red)': r.used?'var(--muted)':'var(--green)';
+      const actions = (!r.used && !r.revoked)
+        ? `<button class="btn btn-ghost btn-sm" onclick="copyCode('${esc(r.id)}')">${es?'Copiar':'Copy'}</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="revokeVipCode('${esc(r.id)}')">${es?'Anular':'Revoke'}</button>`
+        : (r.used && !r.revoked)
+          ? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="revokeVipAccess('${esc(r.id)}','${esc(r.usedBy||'')}')">${es?'Revocar acceso':'Revoke access'}</button>`
+          : '';
+      return `<div class="acct-row" style="align-items:center;gap:8px">
+        <span class="acct-k" style="flex:1;line-height:1.35"><span class="mono" style="font-family:monospace">${esc(r.id)}</span><br><span style="font-size:11px;color:${color}">${status}</span></span>
+        <span style="display:flex;gap:4px">${actions}</span>
+      </div>`;
+    }).join('');
+  }catch(e){ box.innerHTML=`<div style="font-size:12px;color:var(--red)">Error: ${esc(e.message)}</div>`; }
+}
+
+async function revokeVipCode(code){
+  const es=lang==='es';
+  try{ await FB.updateDoc(FB.doc(FB.db,'vipCodes',code),{revoked:true}); showToast(es?'Código anulado':'Code revoked'); loadVipCodesList(); }
+  catch(e){ showToast('Error: '+e.message); }
+}
+// Revocar el acceso VIP de una empresa que ya lo canjeó (queda pendiente de elegir plan).
+async function revokeVipAccess(code,compId){
+  const es=lang==='es';
+  if(!compId){ showToast('—'); return; }
+  showModal(`
+    <div class="modal-icon">🚫</div>
+    <div class="modal-title">${es?'¿Revocar acceso VIP?':'Revoke VIP access?'}</div>
+    <div class="modal-body">${es?'La empresa dejará de tener acceso gratis y deberá elegir un plan la próxima vez que abra la app. Sus datos se conservan.':'The company will lose free access and must choose a plan next time they open the app. Their data is kept.'}</div>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn btn-ghost" onclick="renderAccount()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-red" onclick="doRevokeVipAccess('${esc(code)}','${esc(compId)}')">${es?'Revocar':'Revoke'}</button>
+    </div>`);
+}
+async function doRevokeVipAccess(code,compId){
+  const es=lang==='es';
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',compId),{plan:'pending', vip:false});
+    await FB.updateDoc(FB.doc(FB.db,'vipCodes',code),{revoked:true});
+    closeModal(); showToast(es?'Acceso VIP revocado':'VIP access revoked'); loadVipCodesList();
+  }catch(e){ showToast('Error: '+e.message); }
 }
 
 // ═══ REMOVE A TEAM SUPERVISOR (owner only) ═══
@@ -736,6 +856,100 @@ async function loadSupervisorContext(){
   subscribeExpenses();
   subscribeTrips();
   if(myRole==='owner') subscribeSupervisors();
+  // Si la empresa (dueño) aún no eligió plan/trial/VIP → mostrar candado de activación.
+  // Los supervisores invitados NO ven esto: si la empresa no tiene acceso, se les avisa distinto.
+  maybeShowAccessGate();
+  // Si la prueba ya venció (estado expired) y es el dueño, mostrar solo planes.
+  if(myRole==='owner' && !isAdminUser() && !isVipCompany() && companyData.plan==='expired'){
+    const es=lang==='es';
+    showModal(`
+      <div class="modal-icon">📦</div>
+      <div class="modal-title">${es?'Tu prueba gratis terminó':'Your free trial ended'}</div>
+      <div class="modal-body">${es?'Para seguir usando Sacha Llakta, elige un plan. Tus datos siguen guardados.':'To keep using Sacha Llakta, choose a plan. Your data is still saved.'}</div>
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn btn-rhino" style="width:100%" onclick="closeModal();showPlans()">${es?'Ver planes':'View plans'}</button>
+      </div>`, false, true);
+  }
+  // Revisar recordatorios de fin de prueba al abrir la app.
+  try{ checkTrialReminders(); }catch(e){}
+}
+
+// ═══ CANDADO DE ACTIVACIÓN ═══
+// Bloquea la app hasta que el DUEÑO elija: un plan, el trial, o meta un código VIP.
+function maybeShowAccessGate(){
+  if(hasChosenAccess()) return;             // ya eligió algo → todo normal
+  if(myRole!=='owner'){                       // supervisor invitado a empresa sin activar
+    showModal(`
+      <div class="modal-icon">⏳</div>
+      <div class="modal-title">${lang==='es'?'Empresa sin activar':'Company not activated'}</div>
+      <div class="modal-body">${lang==='es'?'El administrador de tu empresa aún no ha activado el servicio. Pídele que elija un plan para poder empezar.':'Your company admin has not activated the service yet. Ask them to choose a plan to get started.'}</div>
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn btn-ghost" onclick="doLogout()">${lang==='es'?'Salir':'Log out'}</button>
+      </div>`, true, true);
+    return;
+  }
+  showActivationGate();
+}
+
+// Pantalla de selección inicial: 3 planes + trial + código VIP. NO se puede cerrar.
+function showActivationGate(){
+  const es=lang==='es';
+  const link=k=>STRIPE_LINKS[k];
+  const planMini=(p,key,pop)=>{
+    const max=p.maxEmployees===Infinity?(es?'Ilimitado':'Unlimited'):p.maxEmployees+(es?' empleados':' emp.');
+    return `<div class="gate-plan ${pop?'gate-pop':''}">
+      ${pop?`<div class="gate-badge">${es?'POPULAR':'POPULAR'}</div>`:''}
+      <div class="gate-plan-name">${es?p.name:p.nameEn}</div>
+      <div class="gate-plan-price">$${p.price}<span>/${es?'mes':'mo'}</span></div>
+      <div class="gate-plan-max">${max}</div>
+      <a href="${link(key)}" target="_blank" rel="noopener" class="btn btn-rhino gate-plan-btn" onclick="markCheckoutStarted('${key}')">${es?'Contratar':'Subscribe'}</a>
+    </div>`;
+  };
+  showModal(`
+    <div class="modal-title" style="margin-bottom:2px">${es?'Activa tu empresa':'Activate your company'}</div>
+    <div class="modal-body" style="margin-bottom:14px;font-size:13px">${es?'Elige cómo quieres empezar. Sin activar, la app permanece bloqueada.':'Choose how to start. Until activated, the app stays locked.'}</div>
+    <div class="gate-plans">
+      ${planMini(PLANS.basic,'basic',false)}
+      ${planMini(PLANS.pro,'pro',true)}
+      ${planMini(PLANS.enterprise,'enterprise',false)}
+    </div>
+    <div class="gate-or">${es?'— o —':'— or —'}</div>
+    <button class="btn btn-ghost" style="width:100%" onclick="startTrial()">🎁 ${es?'Probar 14 días gratis':'Try 14 days free'}</button>
+    <div class="gate-vip">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${es?'¿Tienes un código de acceso VIP?':'Have a VIP access code?'}</div>
+      <div style="display:flex;gap:8px">
+        <input id="gate-vip-input" placeholder="SLLVIP-XXXXXX" style="flex:1;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+        <button class="btn btn-rhino" onclick="redeemVipCode()">${es?'Usar':'Redeem'}</button>
+      </div>
+      <div id="gate-vip-err" style="font-size:12px;color:var(--red);margin-top:6px;display:none"></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:14px;line-height:1.5">${es?'Pago seguro con Stripe. Tras contratar, tu plan se activa en breve — vuelve a esta pantalla y toca "Ya pagué".':'Secure Stripe payment. After subscribing, your plan activates shortly — return here and tap "I already paid".'}</div>
+    <button class="btn btn-ghost" style="width:100%;margin-top:10px" onclick="confirmPaidRefresh()">${es?'Ya pagué / Actualizar estado':'I already paid / Refresh status'}</button>
+    <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:12px">
+      <button class="btn btn-ghost" style="width:100%;color:var(--red);font-size:13px" onclick="confirmDeleteCompanyOwner()">🗑️ ${es?'¿Correo equivocado? Eliminar esta empresa':'Wrong email? Delete this company'}</button>
+      <button class="btn btn-ghost" style="width:100%;margin-top:6px;font-size:12px" onclick="doLogout()">${es?'Salir':'Log out'}</button>
+    </div>`, true, true);
+}
+function markCheckoutStarted(key){
+  // Solo recordatorio visual; la activación real la confirma el dueño con "Ya pagué".
+  try{ showToast(lang==='es'?'Completa el pago en la pestaña de Stripe, luego vuelve y toca "Ya pagué".':'Complete payment in the Stripe tab, then return and tap "I already paid".'); }catch(e){}
+}
+function confirmPaidRefresh(){
+  // Relee el estado de la empresa desde la nube (por si un proceso externo ya activó el plan).
+  closeModal();
+  (async()=>{
+    try{
+      const cs=await FB.getDoc(FB.doc(FB.db,'companies',companyId));
+      if(cs.exists()) companyData=cs.data();
+    }catch(e){}
+    if(hasChosenAccess()){
+      showToast(lang==='es'?'✓ ¡Activada! Bienvenido.':'✓ Activated! Welcome.');
+      try{ renderAccount(); }catch(e){}
+    }else{
+      showToast(lang==='es'?'Aún no vemos el pago. Si acabas de pagar, espera un momento e intenta de nuevo.':'Payment not detected yet. If you just paid, wait a moment and try again.');
+      showActivationGate();
+    }
+  })();
 }
 
 // ═══ REALTIME: TEAM SUPERVISORS (owner only) ═══
@@ -1818,7 +2032,7 @@ function trialInfo(){
     }
     return {plan:p, label, daysLeft:totalDays, expired:false, maxEmployees:p.maxEmployees};
   }
-  return {plan:p, label, daysLeft:null, expired:(p.id==='cancelled'), maxEmployees:p.maxEmployees};
+  return {plan:p, label, daysLeft:null, expired:(p.id==='cancelled'||p.id==='expired'||p.id==='pending'), maxEmployees:p.maxEmployees};
 }
 
 function renderAccount(){
@@ -1906,6 +2120,12 @@ function renderAccount(){
       <button class="btn btn-ghost acct-btn" onclick="adminGrantPlan('pro')">Plan Pro</button>
       <button class="btn btn-ghost acct-btn" onclick="adminGrantPlan('enterprise')">Plan Empresa</button>
       <button class="btn btn-ghost acct-btn" onclick="adminGrantPlan('trial')">${es?'Reiniciar prueba 14 días':'Reset 14-day trial'}</button>
+    </div>
+    <div class="acct-card" style="border-color:rgba(212,162,74,.5)">
+      <div class="acct-plan-label" style="color:var(--gold,#d4a24a)">${es?'CÓDIGOS VIP 🎁 (acceso gratis ilimitado)':'VIP CODES 🎁 (free unlimited access)'}</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px">${es?'Genera un código de un solo uso y dáselo a quien quieras (familia, socios). Al crear su empresa lo usan y obtienen acceso gratis ilimitado. Cada código sirve una sola vez.':'Generate a one-time code and give it to anyone (family, partners). They use it when creating their company and get free unlimited access. Each code works only once.'}</div>
+      <button class="btn btn-rhino acct-btn" onclick="generateVipCodeNow()">🎁 ${es?'Generar nuevo código VIP':'Generate new VIP code'}</button>
+      <div id="vip-codes-list" style="margin-top:12px"></div>
     </div>` : '';
 
   const addrVal = companyData.address ? esc(companyData.address) : (es?'Sin dirección':'No address');
@@ -1949,6 +2169,8 @@ function renderAccount(){
 
     <div style="text-align:center;font-size:11px;color:var(--muted);opacity:.6;margin-top:18px">Sacha Llakta · ${es?'Control de Viáticos':'Expense Control'}</div>
   `;
+  // Cargar la lista de códigos VIP si es el dueño/admin
+  if(admin){ try{ loadVipCodesList(); }catch(e){} }
 }
 
 // ═══ EDIT SUPERVISOR PHONE ═══
@@ -2040,6 +2262,159 @@ async function adminGrantPlan(kind){
     renderAccount();
     showToast((es?'✓ Plan otorgado: ':'✓ Plan granted: ')+label);
   }catch(e){showToast('Error: '+e.message);}
+}
+
+// ═══ INICIAR TRIAL DE 14 DÍAS ═══
+async function startTrial(){
+  const es=lang==='es';
+  if(companyData && companyData.trialUsed){
+    showToast(es?'Ya usaste tu prueba gratis. Elige un plan para continuar.':'You already used your free trial. Choose a plan to continue.');
+    return;
+  }
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId),{
+      plan:'trial', planStart:FB.serverTimestamp(), trialUsed:true, courtesyDays:null
+    });
+    companyData.plan='trial'; companyData.trialUsed=true; companyData.planStart={toDate:()=>new Date()};
+    closeModal();
+    showToast(es?'🎁 ¡Prueba de 14 días activada! Bienvenido.':'🎁 14-day trial activated! Welcome.');
+    try{ renderAccount(); }catch(e){}
+    try{ renderEmployees(); }catch(e){}
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+// ═══ CANJEAR CÓDIGO VIP (un solo uso) ═══
+async function redeemVipCode(){
+  const es=lang==='es';
+  const inp=document.getElementById('gate-vip-input');
+  const errEl=document.getElementById('gate-vip-err');
+  const code=(inp&&inp.value||'').trim().toUpperCase();
+  const showErr=(m)=>{ if(errEl){errEl.textContent=m;errEl.style.display='block';} };
+  if(!code){ showErr(es?'Escribe el código.':'Enter the code.'); return; }
+  if(!/^SLLVIP-[A-Z0-9]{6}$/.test(code)){ showErr(es?'Formato inválido. Debe ser SLLVIP-XXXXXX.':'Invalid format. Must be SLLVIP-XXXXXX.'); return; }
+  try{
+    const ref=FB.doc(FB.db,'vipCodes',code);
+    const snap=await FB.getDoc(ref);
+    if(!snap.exists()){ showErr(es?'Código no encontrado.':'Code not found.'); return; }
+    const data=snap.data();
+    if(data.used){ showErr(es?'Este código ya fue usado.':'This code was already used.'); return; }
+    if(data.revoked){ showErr(es?'Este código fue anulado.':'This code was revoked.'); return; }
+    // Quemar el código y activar VIP en la empresa
+    await FB.updateDoc(ref,{ used:true, usedBy:companyId, usedByCompany:companyData.company||'', usedAt:FB.serverTimestamp() });
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId),{ plan:'vip', vip:true, vipCode:code, vipActivatedAt:FB.serverTimestamp() });
+    companyData.plan='vip'; companyData.vip=true; companyData.vipCode=code;
+    closeModal();
+    showToast(es?'🎉 ¡Acceso VIP activado! Bienvenido.':'🎉 VIP access activated! Welcome.');
+    try{ renderAccount(); }catch(e){}
+    try{ renderEmployees(); }catch(e){}
+  }catch(e){ showErr('Error: '+e.message); }
+}
+
+// ═══ RECORDATORIOS DE FIN DE PRUEBA (3 días antes, una vez al día) ═══
+function checkTrialReminders(){
+  if(!companyData || companyData.plan!=='trial') return;
+  const left=trialDaysLeft();
+  if(left===null) return;
+  const es=lang==='es';
+  // Expiró mientras estaba fuera → correr cierre de trial
+  if(left<=0){ handleTrialExpiry(); return; }
+  if(left>3) return; // solo avisar desde 3 días antes
+  const today=new Date().toISOString().slice(0,10);
+  const key='sl_trial_reminder_'+companyId;
+  if(localStorage.getItem(key)===today) return; // ya avisamos hoy
+  localStorage.setItem(key,today);
+  const msg = left===1
+    ? (es?'⚠️ Tu prueba gratis termina mañana. Elige un plan para no perder acceso.':'⚠️ Your free trial ends tomorrow. Choose a plan to keep access.')
+    : (es?`⚠️ Te quedan ${left} días de prueba. Elige un plan para continuar sin interrupciones.`:`⚠️ ${left} trial days left. Choose a plan to continue uninterrupted.`);
+  showModal(`
+    <div class="modal-icon">⏰</div>
+    <div class="modal-title">${es?'Tu prueba está por terminar':'Your trial is ending'}</div>
+    <div class="modal-body">${msg}</div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Después':'Later'}</button>
+      <button class="btn btn-rhino" onclick="closeModal();showPlans()">${es?'Ver planes':'View plans'}</button>
+    </div>`);
+}
+
+// ═══ CIERRE DE PRUEBA EXPIRADA ═══
+// Finaliza viajes activos, genera respaldo PDF+CSV, y deja la empresa en 'expired'
+// (mostrará solo los 3 planes, sin opción de trial otra vez).
+let _trialExpiryHandled=false;
+async function handleTrialExpiry(){
+  if(_trialExpiryHandled) return; _trialExpiryHandled=true;
+  const es=lang==='es';
+  try{
+    // 1) Finalizar viajes activos (marca empleados sin viaje activo)
+    const activeEmps=employees.filter(e=>e.tripActive);
+    for(const emp of activeEmps){
+      try{
+        await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',emp.id),{
+          tripActive:false, lastTripId:emp.currentTripId||null, currentTripId:null
+        });
+      }catch(e){}
+      if(emp.currentTripId){
+        try{ await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'trips',emp.currentTripId),{status:'finalized', finalizedByTrialEnd:true}); }catch(e){}
+      }
+    }
+  }catch(e){}
+  // 2) Marcar empresa como expirada (trial terminado)
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId),{ plan:'expired', trialEndedAt:FB.serverTimestamp() });
+    companyData.plan='expired';
+  }catch(e){}
+  // 3) Respaldo automático PDF + CSV de todo lo generado
+  try{ if(typeof downloadAccountPDF==='function') downloadAccountPDF(); }catch(e){}
+  try{ if(typeof exportExcel==='function') exportExcel(); }catch(e){}
+  // 4) Mostrar planes (sin trial)
+  showModal(`
+    <div class="modal-icon">📦</div>
+    <div class="modal-title">${es?'Tu prueba gratis terminó':'Your free trial ended'}</div>
+    <div class="modal-body">${es?'Finalizamos tus viajes activos y descargamos un respaldo (PDF y Excel) con toda tu información. Para seguir usando Sacha Llakta, elige un plan.':'We closed your active trips and downloaded a backup (PDF and Excel) with all your data. To keep using Sacha Llakta, choose a plan.'}</div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-rhino" style="width:100%" onclick="closeModal();showPlans()">${es?'Ver planes':'View plans'}</button>
+    </div>`, false, true);
+}
+
+// ═══ ELIMINAR EMPRESA (solo dueño) — correo equivocado o recrear ═══
+function confirmDeleteCompanyOwner(){
+  const es=lang==='es';
+  if(myRole!=='owner'){ showToast(es?'Solo el dueño puede eliminar la empresa.':'Only the owner can delete the company.'); return; }
+  showModal(`
+    <div class="modal-icon">🗑️</div>
+    <div class="modal-title">${es?'Eliminar esta empresa':'Delete this company'}</div>
+    <div class="modal-body">${es?'Esto borra la empresa y todos sus datos de forma permanente. Úsalo si te equivocaste de correo al crearla, para poder registrarla de nuevo. Esta acción no se puede deshacer.':'This permanently deletes the company and all its data. Use it if you created it with the wrong email, so you can register again. This cannot be undone.'}</div>
+    <div class="field" style="margin-top:12px">
+      <input id="del-confirm-input" placeholder="${es?'Escribe ELIMINAR':'Type DELETE'}" style="text-transform:uppercase">
+    </div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-ghost" onclick="showActivationGate()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-rhino" style="background:var(--red)" onclick="doDeleteCompanyOwner()">${es?'Eliminar definitivamente':'Delete permanently'}</button>
+    </div>`, false, true);
+}
+async function doDeleteCompanyOwner(){
+  const es=lang==='es';
+  const val=(document.getElementById('del-confirm-input')||{}).value||'';
+  const want= es?'ELIMINAR':'DELETE';
+  if(val.trim().toUpperCase()!==want){ showToast(es?`Escribe "${want}" para confirmar.`:`Type "${want}" to confirm.`); return; }
+  try{
+    // Borrar subcolecciones conocidas (empleados, gastos, viajes)
+    for(const sub of ['employees','expenses','trips']){
+      try{
+        const qs=await FB.getDocs(FB.collection(FB.db,'companies',companyId,sub));
+        for(const d of qs.docs){ try{ await FB.deleteDoc(d.ref); }catch(e){} }
+      }catch(e){}
+    }
+    // Liberar el código de empresa (índice inverso) si existe
+    if(companyData.companyCode){
+      try{ await FB.deleteDoc(FB.doc(FB.db,'companyCodes',companyData.companyCode)); }catch(e){}
+    }
+    // Borrar el doc de la empresa
+    await FB.deleteDoc(FB.doc(FB.db,'companies',companyId));
+    // Borrar la cuenta de autenticación para liberar el correo
+    try{ if(currentUser && currentUser.delete) await currentUser.delete(); }catch(e){}
+    showToast(es?'Empresa eliminada. Puedes registrarte de nuevo.':'Company deleted. You can register again.');
+    setTimeout(()=>{ try{ FB.signOut(FB.auth); }catch(e){} location.reload(); }, 1500);
+  }catch(e){ showToast('Error: '+e.message); }
 }
 
 function showPlans(){
@@ -2206,8 +2581,9 @@ function showLogin(){
   }
 }
 function showApp(){document.getElementById('login-screen').classList.add('hidden');document.getElementById('main-app').classList.remove('hidden');applyLang();}
-function showModal(html,wide){
-  document.getElementById('modal-layer').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal${wide?' modal-wide':''}">${html}</div></div>`;
+function showModal(html,wide,locked){
+  const bgClick = locked ? '' : 'onclick="if(event.target===this)closeModal()"';
+  document.getElementById('modal-layer').innerHTML=`<div class="modal-bg" ${bgClick}><div class="modal${wide?' modal-wide':''}">${html}</div></div>`;
 }
 function closeModal(){document.getElementById('modal-layer').innerHTML='';}
 function showToast(msg){
@@ -2332,6 +2708,12 @@ window.triggerAddReceipt=triggerAddReceipt;window.handleReceiptFileSelected=hand
 window.confirmRegenCode=confirmRegenCode;window.regenCode=regenCode;window.viewEmployeeInfo=viewEmployeeInfo;
 window.exportExcel=exportExcel;window.setFilter=setFilter;window.copyCode=copyCode;window.closeModal=closeModal;
 window.renderAccount=renderAccount;window.showPlans=showPlans;window.planComingSoon=planComingSoon;window.confirmNewCompany=confirmNewCompany;
+// nuevas: candado de activación, trial, VIP, eliminar empresa
+window.showActivationGate=showActivationGate;window.startTrial=startTrial;window.redeemVipCode=redeemVipCode;
+window.markCheckoutStarted=markCheckoutStarted;window.confirmPaidRefresh=confirmPaidRefresh;
+window.confirmDeleteCompanyOwner=confirmDeleteCompanyOwner;window.doDeleteCompanyOwner=doDeleteCompanyOwner;
+window.generateVipCodeNow=generateVipCodeNow;window.loadVipCodesList=loadVipCodesList;window.revokeVipCode=revokeVipCode;
+window.revokeVipAccess=revokeVipAccess;window.doRevokeVipAccess=doRevokeVipAccess;
 window.proceedNewCompany=proceedNewCompany;window.downloadAccountPDF=downloadAccountPDF;
 window.confirmCancelSubscription=confirmCancelSubscription;window.reallyCancelSubscription=reallyCancelSubscription;
 window.finishCancel=finishCancel;
