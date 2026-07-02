@@ -601,10 +601,24 @@ async function doRegister(){
     }catch(e){ /* non-fatal: code can be generated later from Account tab */ }
     // onAuthStateChanged will load context
   }catch(e){
-    let msg=e.message;
-    if(e.code==='auth/email-already-in-use') msg=lang==='es'?'Ese correo ya está registrado. Usa "Ingresar".':'Email already registered. Use "Login".';
-    if(e.code==='auth/invalid-email') msg=lang==='es'?'Correo inválido.':'Invalid email.';
-    err.textContent=msg;err.style.display='block';
+    if(e.code==='auth/email-already-in-use'){
+      // El correo ya existe: puede ser una empresa que quedó a medias (pending).
+      // Intentamos reingresar con las credenciales escritas. Si coinciden, onAuthStateChanged
+      // carga el contexto y, si sigue pending, reaparece el candado de planes para terminar.
+      try{
+        await FB.signInWithEmailAndPassword(FB.auth,email,pass);
+        return; // reingreso exitoso → el flujo de auth se encarga del resto
+      }catch(e2){
+        err.textContent=lang==='es'?'Ese correo ya está registrado. Usa "Ingresar" con tu contraseña.':'Email already registered. Use "Login" with your password.';
+        err.style.display='block';
+      }
+    }else{
+      let msg=e.message;
+      if(e.code==='auth/invalid-email') msg=lang==='es'?'Correo inválido.':'Invalid email.';
+      err.textContent=msg;err.style.display='block';
+    }
+  }finally{
+    // Reinicia SIEMPRE el botón: con éxito, con error, o si el usuario sale a medias.
     btn.disabled=false;btn.textContent=lang==='es'?'Crear empresa':'Create company';
   }
 }
@@ -795,6 +809,9 @@ function doLogout(){
   supervisorsList=[];
   myRole='owner';myName='';
   closeModal();
+  // Defensa: si el botón de registro quedó en "Creando…", reinícialo al cerrar sesión.
+  const rb=document.getElementById('btn-register');
+  if(rb){rb.disabled=false;rb.textContent=lang==='es'?'Crear empresa':'Create company';}
   FB.signOut(FB.auth);
 }
 
@@ -927,7 +944,7 @@ function showActivationGate(){
     <button class="btn btn-ghost" style="width:100%;margin-top:10px" onclick="confirmPaidRefresh()">${es?'Ya pagué / Actualizar estado':'I already paid / Refresh status'}</button>
     <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:12px">
       <button class="btn btn-ghost" style="width:100%;color:var(--red);font-size:13px" onclick="confirmDeleteCompanyOwner()">🗑️ ${es?'¿Correo equivocado? Eliminar esta empresa':'Wrong email? Delete this company'}</button>
-      <button class="btn btn-ghost" style="width:100%;margin-top:6px;font-size:12px" onclick="doLogout()">${es?'Salir':'Log out'}</button>
+      <button class="btn btn-ghost" style="width:100%;margin-top:6px;font-size:12px" onclick="confirmPendingExit()">${es?'Salir':'Log out'}</button>
     </div>`, true, true);
 }
 function markCheckoutStarted(key){
@@ -1078,10 +1095,17 @@ function renderEmployees(){
     // checkbox at Iniciar viaje).
     const leftover=(typeof emp.lastLeftover==='number'&&emp.lastLeftover>0.001)?emp.lastLeftover:0;
     const nextAvail=Math.round((assigned+leftover)*100)/100;
-    const nextTripHint=(!emp.tripActive&&leftover>0)
-      ? `<div style="background:var(--surface2);border:1px dashed var(--border);border-radius:10px;padding:9px 12px;margin-top:10px;font-size:12.5px;line-height:1.45;color:var(--text)">
-           💡 ${lang==='es'?'Próximo viaje':'Next trip'}: <b style="color:var(--green)">$${nextAvail.toFixed(2)}</b>
-           <span style="color:var(--muted)">&nbsp;($${assigned.toFixed(2)} ${lang==='es'?'base':'base'} + $${leftover.toFixed(2)} ${lang==='es'?'sobrante':'leftover'})</span>
+    // Out-of-trip: permission (per-employee override, else company default), personal balance, and spend.
+    const outAllowed=(typeof emp.outOfTripAllowed==='boolean')?emp.outOfTripAllowed:!!(companyData&&companyData.defaultOutOfTrip);
+    const wallet=(typeof emp.walletBalance==='number')?Math.max(0,emp.walletBalance)
+                 :((typeof emp.lastLeftover==='number'&&emp.lastLeftover>0.001)?emp.lastLeftover:0);
+    const outExpenses=allExpenses.filter(ex=>ex.employeeId===emp.id && ex.outOfTrip===true);
+    const outTotal=outExpenses.reduce((s,e)=>s+(e.monto||0),0);
+    const nextTripHint=(!emp.tripActive)
+      ? `<div style="background:var(--surface2);border:1px dashed var(--border);border-radius:10px;padding:9px 12px;margin-top:10px;font-size:12.5px;line-height:1.5;color:var(--text)">
+           👛 ${lang==='es'?'Saldo personal':'Personal balance'}: <b style="color:var(--green)">$${wallet.toFixed(2)}</b>
+           <span style="color:var(--muted)">&nbsp;·&nbsp;${outAllowed?(lang==='es'?'puede gastarlo fuera de viaje':'can spend out of trips'):(lang==='es'?'se suma al próximo viaje':'rolls into next trip')}</span>
+           ${outTotal>0?`<div style="margin-top:5px;color:var(--muted)">${lang==='es'?'Gastos fuera de viaje':'Out-of-trip spend'}: <b style="color:var(--red)">-$${outTotal.toFixed(2)}</b> (${outExpenses.length})</div>`:''}
          </div>`
       : '';
     return `<div class="emp-card">
@@ -1120,6 +1144,9 @@ function renderEmployees(){
       <div class="emp-actions" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="copyCode('${esc(emp.code)}')">📋 ${lang==='es'?'Compartir':'Share'}</button>
         <button class="btn btn-ghost btn-sm" onclick="viewEmployeeInfo('${emp.id}')">👤 ${lang==='es'?'Info':'Info'}</button>
+      </div>
+      <div class="emp-actions" style="margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleEmployeeOutOfTrip('${emp.id}')">${outAllowed?'👛':'🔒'} ${lang==='es'?'Fuera de viaje':'Out-of-trip'}: <b style="color:${outAllowed?'var(--green)':'var(--muted)'}">${outAllowed?(lang==='es'?'Permitido':'Allowed'):(lang==='es'?'Bloqueado':'Blocked')}</b></button>
       </div>
       <div class="emp-actions" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="confirmRegenCode('${emp.id}','${esc(emp.name)}')">🔄 ${lang==='es'?'Nuevo código':'New code'}</button>
@@ -1237,8 +1264,11 @@ function renderReports(){
         const tripKey=g.key+'::'+tg.tripId;
         const topen=expandedTrip===tripKey;
         const trip=tg.trip;
+        const isOut = tg.tripId==='__notrip';
         const isActiveTrip = gEmp && gEmp.tripActive && gEmp.currentTripId===tg.tripId;
-        const statusBadge = isActiveTrip
+        const statusBadge = isOut
+          ? `<span class="rg-tag" style="background:rgba(212,165,74,.15);color:var(--rhino);border-color:rgba(212,165,74,.3)">${es?'fuera de viaje':'out-of-trip'}</span>`
+          : isActiveTrip
           ? `<span class="rg-tag" style="background:rgba(34,197,94,.15);color:var(--green);border-color:rgba(34,197,94,.3)">${es?'activo':'active'}</span>`
           : `<span class="rg-tag" style="background:rgba(148,163,184,.12);color:var(--muted);border-color:rgba(148,163,184,.25)">${es?'finalizado':'finished'}</span>`;
         const note = trip&&trip.note ? `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:6px 10px;background:var(--surface2);border-radius:8px;margin:6px 0">📝 ${esc(trip.note)}</div>` : '';
@@ -1261,18 +1291,23 @@ function renderReports(){
           </div>`;
         }).join('') : '';
         const emptyMsg = (topen && !tg.items.length) ? `<div style="font-size:12px;color:var(--muted);text-align:center;padding:10px">${es?'Sin gastos en este viaje':'No expenses in this trip'}</div>` : '';
-        const tripActions = topen ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        const tripActions = topen ? (isOut
+          ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+              <button class="btn btn-ghost btn-sm" onclick="downloadTripCSV('${g.key}','${tg.tripId}')">📊 CSV</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteTrip('${g.key}','${tg.tripId}')">🗑️ ${es?'Eliminar estos gastos':'Delete these expenses'}</button>
+            </div>`
+          : `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
             <button class="btn btn-ghost btn-sm" onclick="editTripNote('${tg.tripId}')">📝 ${es?'Nota del viaje':'Trip note'}</button>
             <button class="btn btn-ghost btn-sm" onclick="downloadTripPDF('${g.key}','${tg.tripId}')">📄 PDF</button>
             <button class="btn btn-ghost btn-sm" onclick="downloadTripCSV('${g.key}','${tg.tripId}')">📊 CSV</button>
             ${(gEmp && !isActiveTrip)?`<button class="btn btn-ghost btn-sm" style="color:var(--green)" onclick="confirmReopenTrip('${g.key}','${tg.tripId}')">↩️ ${es?'Reabrir viaje':'Reopen trip'}</button>`:''}
             <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteTrip('${g.key}','${tg.tripId}')">🗑️ ${es?'Eliminar viaje':'Delete trip'}</button>
-          </div>` : '';
+          </div>`) : '';
         return `<div class="report-group" style="margin:6px 0;border:1px solid var(--border);border-radius:10px">
           <button class="report-group-head" onclick="toggleTrip('${tripKey}')" style="padding:10px 12px">
             <div class="rg-left">
               <span class="rg-arrow ${topen?'open':''}">▶</span>
-              <span class="rg-name" style="font-size:14px">🧳 ${tg.label}</span>
+              <span class="rg-name" style="font-size:14px">${isOut?'👛':'🧳'} ${isOut?(es?'Gastos fuera de viaje':'Out-of-trip expenses'):tg.label}</span>
               ${statusBadge}
             </div>
             <div class="rg-right">
@@ -1425,6 +1460,7 @@ async function saveEmployee(){
       companyAddress:companyData.address||'',
       assignedAmount:amount,
       tripActive:false,
+      outOfTripAllowed: !!(companyData && companyData.defaultOutOfTrip),
       createdAt:FB.serverTimestamp()
     });
     // Also create a lookup doc so employee app can find company by code
@@ -2152,6 +2188,13 @@ function renderAccount(){
     ${owner?adminHtml:''}
 
     <div class="acct-card">
+      <div class="acct-plan-label">${es?'GASTOS FUERA DE VIAJE':'OUT-OF-TRIP EXPENSES'}</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px">${es?'Al terminar un viaje, el sobrante queda como saldo personal del empleado. Aquí decides si puede gastarlo fuera de viaje (dinero del empleado) o solo acumularlo para el siguiente viaje (dinero de la empresa). Este es el valor por defecto para todos; puedes cambiarlo por empleado en su tarjeta.':'When a trip ends, the leftover becomes the employee\'s personal balance. Here you decide whether they can spend it out of trips (employee money) or only carry it to the next trip (company money). This is the default for everyone; you can override it per employee on their card.'}</div>
+      <div class="acct-row"><span class="acct-k">${es?'Por defecto (aplica a todos)':'Default (applies to all)'}</span><span class="acct-v" style="color:${(companyData.defaultOutOfTrip)?'var(--green)':'var(--muted)'}">${(companyData.defaultOutOfTrip)?(es?'Permitido':'Allowed'):(es?'Bloqueado':'Blocked')}</span></div>
+      <button class="btn btn-ghost acct-btn" style="margin-top:10px" onclick="toggleCompanyOutOfTrip()">${(companyData.defaultOutOfTrip)?(es?'🔒 Bloquear para todos':'🔒 Block for everyone'):(es?'✅ Permitir para todos':'✅ Allow for everyone')}</button>
+    </div>
+
+    <div class="acct-card">
       <div class="acct-plan-label">${es?'GESTIÓN':'MANAGEMENT'}</div>
       <button class="btn btn-ghost acct-btn" onclick="exportExcel()">📊 ${es?'Descargar todos los gastos (CSV)':'Download all expenses (CSV)'}</button>
       <button class="btn btn-ghost acct-btn" onclick="downloadAccountPDF()">📄 ${es?'Descargar respaldo PDF':'Download PDF backup'}</button>
@@ -2171,6 +2214,42 @@ function renderAccount(){
   `;
   // Cargar la lista de códigos VIP si es el dueño/admin
   if(admin){ try{ loadVipCodesList(); }catch(e){} }
+}
+
+// ═══ OUT-OF-TRIP SPENDING SETTING ═══
+// Company-wide default. Also bulk-applies to every current employee (per-employee
+// override happens afterward on each employee card).
+async function toggleCompanyOutOfTrip(){
+  const es=lang==='es';
+  const next=!(companyData&&companyData.defaultOutOfTrip);
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId),{defaultOutOfTrip:next});
+    companyData.defaultOutOfTrip=next;
+    for(const emp of employees){
+      try{ await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',emp.id),{outOfTripAllowed:next}); }catch(e){}
+    }
+    showToast(next
+      ? (es?'✓ Gastos fuera de viaje permitidos para todos':'✓ Out-of-trip expenses allowed for everyone')
+      : (es?'✓ Bloqueados para todos':'✓ Blocked for everyone'));
+    renderAccount();
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+// Per-employee override of the out-of-trip permission.
+async function toggleEmployeeOutOfTrip(id){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===id);
+  if(!emp) return;
+  const cur=(typeof emp.outOfTripAllowed==='boolean')?emp.outOfTripAllowed:!!(companyData&&companyData.defaultOutOfTrip);
+  const next=!cur;
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{outOfTripAllowed:next});
+    emp.outOfTripAllowed=next;
+    showToast(next
+      ? (es?'✓ '+emp.name+' puede gastar fuera de viaje':'✓ '+emp.name+' can spend out of trips')
+      : (es?'🔒 Bloqueado para '+emp.name:'🔒 Blocked for '+emp.name));
+    renderEmployees();
+  }catch(e){ showToast('Error: '+e.message); }
 }
 
 // ═══ EDIT SUPERVISOR PHONE ═══
@@ -2414,6 +2493,48 @@ async function doDeleteCompanyOwner(){
     try{ if(currentUser && currentUser.delete) await currentUser.delete(); }catch(e){}
     showToast(es?'Empresa eliminada. Puedes registrarte de nuevo.':'Company deleted. You can register again.');
     setTimeout(()=>{ try{ FB.signOut(FB.auth); }catch(e){} location.reload(); }, 1500);
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+// ═══ SALIR SIN ACTIVAR (empresa recién creada, aún 'pending') ═══
+// Cuando el DUEÑO de una empresa SIN activar toca "Salir", le damos tres caminos:
+// volver a elegir plan, guardar y salir (deja el cascarón para retomar después),
+// o descartar y salir (borra la empresa vacía y libera el correo).
+// SEGURIDAD: una empresa activa o con datos JAMÁS se borra al salir; en ese caso es logout normal.
+function confirmPendingExit(){
+  const es=lang==='es';
+  if(myRole!=='owner' || hasChosenAccess()){ doLogout(); return; }
+  showModal(`
+    <div class="modal-icon">👋</div>
+    <div class="modal-title">${es?'Aún no activaste tu empresa':'You have not activated your company'}</div>
+    <div class="modal-body">${es?'Todavía no elegiste un plan ni la prueba gratis. ¿Qué quieres hacer?':'You have not chosen a plan or the free trial yet. What would you like to do?'}</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
+      <button class="btn btn-ghost" style="width:100%" onclick="showActivationGate()">${es?'← Volver y elegir un plan':'← Go back and choose a plan'}</button>
+      <button class="btn btn-ghost" style="width:100%" onclick="doLogout()">${es?'Guardar y salir (retomo después)':'Save and exit (finish later)'}</button>
+      <button class="btn btn-ghost" style="width:100%;color:var(--red)" onclick="discardPendingCompany()">${es?'Descartar y salir (libera el correo)':'Discard and exit (frees the email)'}</button>
+    </div>`, true, true);
+}
+async function discardPendingCompany(){
+  const es=lang==='es';
+  // Doble seguridad: nunca borrar una empresa activa o con datos.
+  if(myRole!=='owner' || hasChosenAccess()){ doLogout(); return; }
+  try{
+    // Limpiar cualquier subcolección (normalmente vacía en una empresa pending)
+    for(const sub of ['employees','expenses','trips']){
+      try{
+        const qs=await FB.getDocs(FB.collection(FB.db,'companies',companyId,sub));
+        for(const d of qs.docs){ try{ await FB.deleteDoc(d.ref); }catch(e){} }
+      }catch(e){}
+    }
+    // Liberar el código de empresa si se llegó a reservar
+    if(companyData && companyData.companyCode){
+      try{ await FB.deleteDoc(FB.doc(FB.db,'companyCodes',companyData.companyCode)); }catch(e){}
+    }
+    // Borrar el doc de la empresa y la cuenta de Auth (libera el correo)
+    await FB.deleteDoc(FB.doc(FB.db,'companies',companyId));
+    try{ if(currentUser && currentUser.delete) await currentUser.delete(); }catch(e){}
+    showToast(es?'Listo. Tu correo quedó libre para registrarte cuando quieras.':'Done. Your email is free to register whenever you want.');
+    setTimeout(()=>{ try{ FB.signOut(FB.auth); }catch(e){} location.reload(); }, 1400);
   }catch(e){ showToast('Error: '+e.message); }
 }
 
@@ -2712,6 +2833,7 @@ window.renderAccount=renderAccount;window.showPlans=showPlans;window.planComingS
 window.showActivationGate=showActivationGate;window.startTrial=startTrial;window.redeemVipCode=redeemVipCode;
 window.markCheckoutStarted=markCheckoutStarted;window.confirmPaidRefresh=confirmPaidRefresh;
 window.confirmDeleteCompanyOwner=confirmDeleteCompanyOwner;window.doDeleteCompanyOwner=doDeleteCompanyOwner;
+window.confirmPendingExit=confirmPendingExit;window.discardPendingCompany=discardPendingCompany;
 window.generateVipCodeNow=generateVipCodeNow;window.loadVipCodesList=loadVipCodesList;window.revokeVipCode=revokeVipCode;
 window.revokeVipAccess=revokeVipAccess;window.doRevokeVipAccess=doRevokeVipAccess;
 window.proceedNewCompany=proceedNewCompany;window.downloadAccountPDF=downloadAccountPDF;
@@ -2720,6 +2842,7 @@ window.finishCancel=finishCancel;
 window.editCompanyAddress=editCompanyAddress;window.saveCompanyAddress=saveCompanyAddress;window.adminGrantPlan=adminGrantPlan;
 window.editSupervisorPhone=editSupervisorPhone;window.saveSupervisorPhone=saveSupervisorPhone;
 window.editAmount=editAmount;window.saveAmount=saveAmount;
+window.toggleCompanyOutOfTrip=toggleCompanyOutOfTrip;window.toggleEmployeeOutOfTrip=toggleEmployeeOutOfTrip;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
 window.toggleGroup=toggleGroup;window.confirmDeleteExpense=confirmDeleteExpense;window.deleteExpense=deleteExpense;
