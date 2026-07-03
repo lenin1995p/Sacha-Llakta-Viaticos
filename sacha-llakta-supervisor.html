@@ -387,6 +387,19 @@ const STRIPE_LINKS = {
   enterprise: "https://buy.stripe.com/8x2cN443X9ZM0vt6W0gw002"   // Plan Empresa ($59.99/mes) - LIVE
 };
 
+// Build the Stripe checkout URL with this company's id attached, so the payment
+// webhook can identify and activate the exact company after a successful payment.
+function stripeLink(key){
+  const base = STRIPE_LINKS[key];
+  if(!base) return base;
+  const params = [];
+  if(typeof companyId !== 'undefined' && companyId) params.push('client_reference_id=' + encodeURIComponent(companyId));
+  const email = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email : '';
+  if(email) params.push('prefilled_email=' + encodeURIComponent(email));
+  if(!params.length) return base;
+  return base + (base.includes('?') ? '&' : '?') + params.join('&');
+}
+
 const TRIAL_DAYS = 14;
 
 const PLANS = {
@@ -928,7 +941,7 @@ function maybeShowAccessGate(){
 // Pantalla de selección inicial: 3 planes + trial + código VIP. NO se puede cerrar.
 function showActivationGate(){
   const es=lang==='es';
-  const link=k=>STRIPE_LINKS[k];
+  const link=k=>stripeLink(k);
   const planMini=(p,key,pop)=>{
     const max=p.maxEmployees===Infinity?(es?'Ilimitado':'Unlimited'):p.maxEmployees+(es?' empleados':' emp.');
     return `<div class="gate-plan ${pop?'gate-pop':''}">
@@ -2572,7 +2585,7 @@ function showPlans(){
     const isCurrent=(cur===p.id);
     const max=p.maxEmployees===Infinity?(es?'Ilimitado':'Unlimited'):p.maxEmployees+(es?' empleados':' employees');
     const support=es?p.support:(p.supportEn||p.support);
-    const link=STRIPE_LINKS[linkKey];
+    const link=stripeLink(linkKey);
     let btn;
     if(isCurrent){
       btn=`<button class="btn btn-ghost" style="width:100%;margin-top:12px" disabled>${es?'Tu plan actual':'Your current plan'}</button>`;
