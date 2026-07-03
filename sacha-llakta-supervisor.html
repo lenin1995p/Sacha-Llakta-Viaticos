@@ -1101,6 +1101,16 @@ function renderEmployees(){
                  :((typeof emp.lastLeftover==='number'&&emp.lastLeftover>0.001)?emp.lastLeftover:0);
     const outExpenses=allExpenses.filter(ex=>ex.employeeId===emp.id && ex.outOfTrip===true);
     const outTotal=outExpenses.reduce((s,e)=>s+(e.monto||0),0);
+    // Top cards behave differently when idle:
+    //  · active trip → Viáticos/Gastado/Restante as usual.
+    //  · idle + allowed  → personal balance is the employee's money → top Restante = 0 (lives only in the wallet below).
+    //  · idle + blocked  → leftover is earmarked for the next trip → top Restante shows the wallet.
+    const isActiveTripCard=!!emp.tripActive;
+    const viaticosShown=isActiveTripCard?assigned:0;
+    const gastadoShown =isActiveTripCard?total:0;
+    const restanteShown=isActiveTripCard?(assigned-total):(outAllowed?0:wallet);
+    const viaticosColor=viaticosShown>0?'var(--rhino)':'var(--muted)';
+    const restanteColor=restanteShown<0?'var(--red)':(restanteShown>0?'var(--green)':'var(--muted)');
     const nextTripHint=(!emp.tripActive)
       ? `<div style="background:var(--surface2);border:1px dashed var(--border);border-radius:10px;padding:9px 12px;margin-top:10px;font-size:12.5px;line-height:1.5;color:var(--text)">
            👛 ${lang==='es'?'Saldo personal':'Personal balance'}: <b style="color:var(--green)">$${wallet.toFixed(2)}</b>
@@ -1123,15 +1133,15 @@ function renderEmployees(){
       <div class="emp-money-row">
         <div class="emp-money-item">
           <div class="emp-money-k">${lang==='es'?'Viáticos':'Per-diem'}</div>
-          <div class="emp-money-v" style="color:var(--rhino)">$${assigned.toFixed(2)}</div>
+          <div class="emp-money-v" style="color:${viaticosColor}">$${viaticosShown.toFixed(2)}</div>
         </div>
         <div class="emp-money-item">
           <div class="emp-money-k">${lang==='es'?'Gastado':'Spent'}</div>
-          <div class="emp-money-v" style="color:var(--red)">$${total.toFixed(2)}</div>
+          <div class="emp-money-v" style="color:var(--red)">$${gastadoShown.toFixed(2)}</div>
         </div>
         <div class="emp-money-item">
           <div class="emp-money-k">${lang==='es'?'Restante':'Remaining'}</div>
-          <div class="emp-money-v" style="color:${remaining<0?'var(--red)':'var(--green)'}">$${remaining.toFixed(2)}</div>
+          <div class="emp-money-v" style="color:${restanteColor}">$${restanteShown.toFixed(2)}</div>
         </div>
       </div>
       ${nextTripHint}

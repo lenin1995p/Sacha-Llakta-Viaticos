@@ -951,15 +951,28 @@ function startWatchdog(){
       const cloudIds=new Set();
       snap.forEach(docSnap=>cloudIds.add(docSnap.id));
       if(!expSeeded){ expSeeded=true; return; } // skip first load (already in sync)
-      // Any expense in S.gastos whose cloudId is no longer in the cloud was deleted by supervisor
-      const removed=S.gastos.filter(g=>g.cloudId && !cloudIds.has(g.cloudId));
-      if(removed.length){
+      let changed=false, msgN=0;
+      // Trip expenses deleted by the supervisor (balance is derived, so no refund needed)
+      const removedTrip=S.gastos.filter(g=>g.cloudId && !cloudIds.has(g.cloudId));
+      if(removedTrip.length){
         S.gastos=S.gastos.filter(g=>!(g.cloudId && !cloudIds.has(g.cloudId)));
+        changed=true; msgN+=removedTrip.length;
+      }
+      // Out-of-trip expenses deleted by the supervisor → remove AND refund the personal balance.
+      const removedOut=(S.outGastos||[]).filter(g=>g.cloudId && !cloudIds.has(g.cloudId));
+      if(removedOut.length){
+        const refund=removedOut.reduce((s,g)=>s+(g.monto||0),0);
+        S.outGastos=S.outGastos.filter(g=>!(g.cloudId && !cloudIds.has(g.cloudId)));
+        S.wallet=Math.round(((S.wallet||0)+refund)*100)/100;
+        changed=true; msgN+=removedOut.length;
+      }
+      if(changed){
         save();
         if(typeof render==='function') render();
+        if(removedOut.length && S.linked) syncWallet(); // push the refunded balance back up
         toast(lang==='es'
-          ? (removed.length===1?'Tu supervisor eliminó un gasto':'Tu supervisor eliminó '+removed.length+' gastos')
-          : (removed.length===1?'Your supervisor deleted an expense':'Your supervisor deleted '+removed.length+' expenses'));
+          ? (msgN===1?'Tu supervisor eliminó un gasto':'Tu supervisor eliminó '+msgN+' gastos')
+          : (msgN===1?'Your supervisor deleted an expense':'Your supervisor deleted '+msgN+' expenses'));
       }
     },(err)=>{ console.warn('watchdog expenses error',err); });
   }
@@ -1745,6 +1758,8 @@ function showEndTripModal(){
 }
 
 function startTrip(){
+  // Close out the personal (out-of-trip) ledger into history so the active screen starts clean.
+  archiveOutGastos();
   S.tripActive=true;
   S.tripStart=new Date().toLocaleString(lang==='es'?'es-US':'en-US',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
   S.currentTripId='trip_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
@@ -1752,6 +1767,28 @@ function startTrip(){
   S.tripEnd=null;
   save();closeModal();render();
   if(S.linked){ syncTripStatus(); createTripDoc(S.currentTripId); }
+}
+
+// Move the accumulated out-of-trip expenses into history as a closed personal-spending record,
+// then clear the live list. The wallet balance is untouched (money already spent).
+function archiveOutGastos(){
+  if(!S.outGastos || !S.outGastos.length) return;
+  const items=[...S.outGastos];
+  const totalSpent=Math.round(items.reduce((s,g)=>s+(g.monto||0),0)*100)/100;
+  const nowStr=new Date().toLocaleString(lang==='es'?'es-US':'en-US',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  S.history.unshift({
+    id:Date.now(),
+    type:'outOfTrip',
+    company:S.company, employee:S.employee,
+    periodStart:(items[items.length-1]&&items[items.length-1].fecha)||nowStr,
+    periodEnd:(items[0]&&items[0].fecha)||nowStr,
+    archivedAt:nowStr,
+    totalSpent,
+    gastos:items,
+    categories:[...S.categories]
+  });
+  S.outGastos=[];
+  save();
 }
 
 function endTrip(){
@@ -1859,7 +1896,29 @@ function renderHistory(){
     el.innerHTML=`<div class="empty"><div class="empty-icon">🗂️</div><div class="empty-title">${t('no-history')}</div><div class="empty-sub">${t('no-history-sub')}</div></div>`;
     return;
   }
-  el.innerHTML=S.history.map(trip=>`
+  el.innerHTML=S.history.map(trip=>{
+    // Out-of-trip personal spending record (different shape than a trip).
+    if(trip.type==='outOfTrip'){
+      return `
+    <div class="trip-card">
+      <div class="trip-card-header">
+        <div>
+          <div class="trip-card-company">${esc(trip.company)}</div>
+          <div class="trip-card-emp">${esc(trip.employee)}</div>
+          <div class="trip-card-dates">👛 ${lang==='es'?'Gastos fuera de viaje':'Out-of-trip expenses'} · ${trip.archivedAt||trip.periodEnd||'—'}</div>
+        </div>
+        <div class="badge" style="background:rgba(212,165,74,.15);color:var(--rhino)">${lang==='es'?'Personal':'Personal'}</div>
+      </div>
+      <div class="trip-stats-row">
+        <div class="trip-stat"><div class="trip-stat-label">${lang==='es'?'Gastado':'Spent'}</div><div class="trip-stat-val" style="color:var(--red)">$${(trip.totalSpent||0).toFixed(2)}</div></div>
+        <div class="trip-stat"><div class="trip-stat-label">${lang==='es'?'Gastos':'Expenses'}</div><div class="trip-stat-val" style="color:var(--muted)">${(trip.gastos||[]).length}</div></div>
+      </div>
+      <div class="trip-actions">
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteHistory('${trip.id}')">${t('eliminar')}</button>
+      </div>
+    </div>`;
+    }
+    return `
     <div class="trip-card">
       <div class="trip-card-header">
         <div>
@@ -1880,11 +1939,12 @@ function renderHistory(){
         <button class="btn btn-ghost btn-sm" onclick="shareHistoryWhatsApp('${trip.id}')">💬</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteHistory('${trip.id}')">${t('eliminar')}</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function deleteHistory(id){
-  showCenterModal('🗑️',lang==='es'?'¿Eliminar este viaje?':'Delete this trip?',
+  showCenterModal('🗑️',lang==='es'?'¿Eliminar este registro?':'Delete this record?',
     lang==='es'?'Se eliminará del historial permanentemente.':'It will be permanently deleted from history.',
     null,
     [{label:t('cancelar'),cls:'btn-ghost',fn:closeModal},
