@@ -2881,6 +2881,14 @@ window.downloadEmployeeAllPDF=downloadEmployeeAllPDF;window.downloadEmployeeAllC
 window.confirmDeleteGroup=confirmDeleteGroup;window.deleteGroup=deleteGroup;window.forgotPassword=forgotPassword;
 
 applyLang();
+
+// Open a specific login tab when arrived from the landing (e.g. ?tab=register or ?tab=join)
+try{
+  const _urlTab = new URLSearchParams(location.search).get('tab');
+  if(_urlTab && ['login','register','join'].includes(_urlTab)){
+    switchLoginTab(_urlTab);
+  }
+}catch(e){}
 </script>
 </body>
 </html>
