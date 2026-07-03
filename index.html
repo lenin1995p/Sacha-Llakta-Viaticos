@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sacha Llakta Viáticos · Control de viáticos para equipos en campo</title>
+<meta name="description" content="Tu cuadrilla registra gastos y recibos desde el celular. Tú ves el saldo en tiempo real y descargas el reporte en PDF. Control de viáticos sin papeles perdidos.">
+<meta property="og:title" content="Sacha Llakta Viáticos">
+<meta property="og:description" content="Control de viáticos en tiempo real para equipos en campo. Gastos, recibos y reportes PDF desde el celular.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0A0E12">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A0E12; --bg-soft:#0E141B; --card:#111A23; --card-2:#0F1720;
+  --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.14);
+  --gold:#E3A94A; --gold-soft:#F2C879;
+  --green:#2FD37A; --green-deep:#16B364; --leaf:#4CAF6E;
+  --text:#EAF0F5; --muted:#93A1AE; --dim:#63707C; --red:#F26D6D;
+  --maxw:1140px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  line-height:1.55; -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+body::before{
+  content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(680px 420px at 82% -6%, rgba(47,211,122,.10), transparent 60%),
+    radial-gradient(560px 380px at 8% 8%, rgba(227,169,74,.08), transparent 62%);
+}
+.wrap{max-width:var(--maxw); margin:0 auto; padding:0 22px; position:relative; z-index:1}
+a{color:inherit; text-decoration:none}
+h1,h2,h3{font-family:'Bricolage Grotesque',sans-serif; line-height:1.05; letter-spacing:-.02em; font-weight:700}
+.eyebrow{
+  font-size:12px; font-weight:700; letter-spacing:.18em; text-transform:uppercase;
+  color:var(--gold); display:inline-flex; align-items:center; gap:9px;
+}
+.eyebrow::before{content:""; width:22px; height:1px; background:var(--gold); opacity:.6}
+
+/* ---------- HEADER ---------- */
+header{
+  position:sticky; top:0; z-index:50;
+  backdrop-filter:blur(12px); background:rgba(10,14,18,.72);
+  border-bottom:1px solid var(--line);
+}
+.nav{display:flex; align-items:center; justify-content:space-between; height:66px}
+.brand{display:flex; align-items:center; gap:10px; font-family:'Bricolage Grotesque'; font-weight:800; font-size:18px; letter-spacing:-.01em}
+.brand .leaf{width:26px; height:26px; flex:none}
+.brand b{color:var(--gold)}
+.nav-links{display:flex; align-items:center; gap:30px}
+.nav-links a{font-size:14.5px; color:var(--muted); font-weight:500; transition:color .18s}
+.nav-links a:hover{color:var(--text)}
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  font-family:'Inter'; font-weight:600; font-size:15px; border-radius:12px;
+  padding:12px 20px; cursor:pointer; border:1px solid transparent; transition:transform .16s, box-shadow .2s, background .2s;
+  white-space:nowrap;
+}
+.btn-gold{background:linear-gradient(180deg,var(--gold-soft),var(--gold)); color:#20160a; box-shadow:0 6px 22px rgba(227,169,74,.24)}
+.btn-gold:hover{transform:translateY(-1px); box-shadow:0 10px 30px rgba(227,169,74,.34)}
+.btn-green{background:linear-gradient(180deg,var(--green),var(--green-deep)); color:#04140b; box-shadow:0 6px 22px rgba(47,211,122,.22)}
+.btn-green:hover{transform:translateY(-1px); box-shadow:0 10px 30px rgba(47,211,122,.32)}
+.btn-ghost{background:transparent; color:var(--text); border-color:var(--line-2)}
+.btn-ghost:hover{border-color:var(--gold); color:var(--gold-soft)}
+.btn-sm{padding:9px 16px; font-size:14px}
+.nav .btn{margin-left:8px}
+.hamb{display:none; background:none; border:1px solid var(--line-2); border-radius:10px; width:42px; height:40px; color:var(--text); font-size:18px; cursor:pointer}
+
+/* ---------- HERO ---------- */
+.hero{padding:74px 0 40px; position:relative}
+.hero-grid{display:grid; grid-template-columns:1.05fr .95fr; gap:52px; align-items:center}
+.hero h1{font-size:clamp(38px,5.4vw,62px); font-weight:800; margin:20px 0 0}
+.hero h1 .g{color:var(--green); position:relative; white-space:nowrap}
+.hero p.lead{font-size:clamp(16px,2vw,19px); color:var(--muted); margin:22px 0 0; max-width:34ch}
+.hero-cta{display:flex; gap:12px; margin-top:32px; flex-wrap:wrap}
+.hero-trust{display:flex; align-items:center; gap:18px; margin-top:24px; color:var(--dim); font-size:13.5px; flex-wrap:wrap}
+.hero-trust span{display:inline-flex; align-items:center; gap:7px}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:0 0 0 4px rgba(47,211,122,.16)}
+
+/* ---------- HERO DEVICE / RING ---------- */
+.device{
+  position:relative; margin:0 auto; width:100%; max-width:380px;
+  background:linear-gradient(180deg,var(--card),var(--card-2));
+  border:1px solid var(--line-2); border-radius:30px; padding:26px 22px 22px;
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.device::before{content:""; position:absolute; top:12px; left:50%; transform:translateX(-50%); width:74px; height:5px; border-radius:5px; background:rgba(255,255,255,.12)}
+.ring-wrap{position:relative; width:210px; height:210px; margin:16px auto 6px}
+.ring-wrap svg{transform:rotate(-90deg); width:100%; height:100%; overflow:visible}
+.ring-bg{fill:none; stroke:rgba(255,255,255,.06); stroke-width:15}
+.ring-fg{fill:none; stroke:url(#ringgrad); stroke-width:15; stroke-linecap:round; filter:drop-shadow(0 0 10px rgba(47,211,122,.45))}
+.ring-center{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center}
+.ring-amount{font-family:'Bricolage Grotesque'; font-weight:800; font-size:34px; color:var(--green); font-variant-numeric:tabular-nums; letter-spacing:-.01em}
+.ring-label{font-size:11px; letter-spacing:.22em; color:var(--dim); text-transform:uppercase; margin-top:2px}
+.stat-row{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:14px}
+.stat{background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:12px; padding:11px 6px; text-align:center}
+.stat .k{font-size:9.5px; letter-spacing:.14em; color:var(--dim); text-transform:uppercase}
+.stat .v{font-family:'Bricolage Grotesque'; font-weight:700; font-size:16px; margin-top:3px; font-variant-numeric:tabular-nums}
+.v.green{color:var(--green)} .v.red{color:var(--red)} .v.muted{color:var(--muted)}
+.receipt{
+  display:flex; align-items:center; gap:11px; margin-top:14px;
+  background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:14px; padding:11px 13px;
+  opacity:0; transform:translateY(10px);
+}
+.receipt.show{opacity:1; transform:translateY(0); transition:opacity .5s, transform .5s}
+.receipt .ic{width:34px; height:34px; border-radius:10px; background:rgba(47,211,122,.14); display:flex; align-items:center; justify-content:center; font-size:17px}
+.receipt .rt{flex:1; min-width:0}
+.receipt .rt b{font-size:13.5px; font-weight:600; display:block}
+.receipt .rt small{font-size:11.5px; color:var(--dim)}
+.receipt .ra{font-family:'Bricolage Grotesque'; font-weight:700; color:var(--red); font-size:15px}
+.device-float{position:absolute; border-radius:14px; padding:9px 13px; font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:7px; box-shadow:0 14px 34px -12px rgba(0,0,0,.7)}
+.float-pdf{top:-16px; right:-14px; background:#12212c; border:1px solid var(--line-2); color:var(--gold-soft)}
+.float-sync{bottom:44px; left:-26px; background:#0f1f18; border:1px solid rgba(47,211,122,.3); color:var(--green)}
+
+/* ---------- SECTION SHELL ---------- */
+section{position:relative; z-index:1}
+.sec{padding:92px 0}
+.sec-head{max-width:640px; margin:0 auto 54px; text-align:center}
+.sec-head h2{font-size:clamp(28px,3.6vw,42px); margin-top:14px}
+.sec-head p{color:var(--muted); font-size:17px; margin-top:16px}
+
+/* ---------- STEPS ---------- */
+.steps{display:grid; grid-template-columns:repeat(3,1fr); gap:20px}
+.step{background:linear-gradient(180deg,var(--card),var(--card-2)); border:1px solid var(--line); border-radius:20px; padding:28px 24px 26px; position:relative; overflow:hidden}
+.step::after{content:""; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,var(--gold),transparent)}
+.step .num{font-family:'Bricolage Grotesque'; font-weight:800; font-size:15px; color:var(--gold); letter-spacing:.05em}
+.step h3{font-size:20px; margin:14px 0 9px}
+.step p{color:var(--muted); font-size:14.5px}
+.step .si{font-size:26px; margin-bottom:4px; display:block}
+
+/* ---------- FEATURES ---------- */
+.feat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+.feat{background:var(--card-2); border:1px solid var(--line); border-radius:16px; padding:24px 22px; transition:border-color .2s, transform .2s}
+.feat:hover{border-color:var(--line-2); transform:translateY(-2px)}
+.feat .fi{width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:21px; background:rgba(227,169,74,.12); margin-bottom:15px}
+.feat h3{font-size:17px; margin-bottom:7px}
+.feat p{color:var(--muted); font-size:14px}
+
+/* ---------- PRICING ---------- */
+.price-band{background:var(--bg-soft); border-top:1px solid var(--line); border-bottom:1px solid var(--line)}
+.plans{display:grid; grid-template-columns:repeat(3,1fr); gap:20px; align-items:stretch}
+.plan{background:linear-gradient(180deg,var(--card),var(--card-2)); border:1px solid var(--line); border-radius:22px; padding:30px 26px; display:flex; flex-direction:column}
+.plan.pop{border-color:rgba(47,211,122,.45); box-shadow:0 20px 60px -30px rgba(47,211,122,.4)}
+.plan .tag{align-self:flex-start; font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--green); background:rgba(47,211,122,.12); border:1px solid rgba(47,211,122,.3); padding:5px 11px; border-radius:20px; margin-bottom:14px}
+.plan h3{font-size:22px}
+.plan .price{font-family:'Bricolage Grotesque'; font-weight:800; font-size:44px; margin:12px 0 2px; letter-spacing:-.02em}
+.plan .price small{font-size:16px; font-weight:600; color:var(--muted); font-family:'Inter'}
+.plan .who{color:var(--muted); font-size:14px; min-height:40px}
+.plan ul{list-style:none; margin:20px 0 26px; display:flex; flex-direction:column; gap:11px}
+.plan li{font-size:14.5px; color:var(--text); display:flex; align-items:flex-start; gap:10px}
+.plan li svg{flex:none; margin-top:3px}
+.plan .btn{width:100%; margin-top:auto}
+.price-note{text-align:center; color:var(--dim); font-size:13.5px; margin-top:28px}
+
+/* ---------- CTA BAND ---------- */
+.cta{padding:96px 0}
+.cta-card{
+  background:
+    radial-gradient(600px 300px at 80% 0%, rgba(47,211,122,.14), transparent 60%),
+    linear-gradient(180deg,var(--card),var(--card-2));
+  border:1px solid var(--line-2); border-radius:28px; padding:60px 40px; text-align:center;
+}
+.cta-card h2{font-size:clamp(28px,4vw,44px)}
+.cta-card p{color:var(--muted); font-size:17px; margin:16px auto 30px; max-width:52ch}
+.cta-card .hero-cta{justify-content:center}
+
+/* ---------- FOOTER ---------- */
+footer{border-top:1px solid var(--line); padding:52px 0 40px}
+.foot{display:flex; justify-content:space-between; gap:30px; flex-wrap:wrap; align-items:flex-start}
+.foot .brand{margin-bottom:12px}
+.foot-tag{color:var(--muted); font-size:14px; max-width:34ch}
+.foot-tag .kichwa{color:var(--gold-soft); font-style:italic}
+.foot-links{display:flex; gap:44px; flex-wrap:wrap}
+.foot-col h4{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); margin-bottom:14px; font-family:'Inter'; font-weight:700}
+.foot-col a{display:block; color:var(--muted); font-size:14.5px; margin-bottom:10px; transition:color .18s}
+.foot-col a:hover{color:var(--gold-soft)}
+.foot-bottom{margin-top:40px; padding-top:22px; border-top:1px solid var(--line); display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; color:var(--dim); font-size:13px}
+
+/* ---------- REVEAL ---------- */
+.reveal{opacity:0; transform:translateY(22px); transition:opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1; transform:none}
+
+/* ---------- RESPONSIVE ---------- */
+@media(max-width:900px){
+  .hero-grid{grid-template-columns:1fr; gap:44px}
+  .hero{padding:52px 0 30px; text-align:center}
+  .hero p.lead{margin-left:auto; margin-right:auto}
+  .hero-cta,.hero-trust{justify-content:center}
+  .steps,.feat-grid,.plans{grid-template-columns:1fr}
+  .nav-links{display:none}
+  .nav-links.open{display:flex; position:absolute; top:66px; left:0; right:0; flex-direction:column; gap:0; background:var(--bg-soft); border-bottom:1px solid var(--line); padding:8px 22px 18px}
+  .nav-links.open a{padding:13px 0; border-bottom:1px solid var(--line); width:100%}
+  .nav-links.open .btn{margin:12px 0 0; width:100%}
+  .hamb{display:inline-flex; align-items:center; justify-content:center}
+  .nav>.btn-gold{display:none}
+  .device-float{display:none}
+  .foot{flex-direction:column}
+}
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important; transition:none!important}
+  .reveal{opacity:1; transform:none}
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="wrap nav">
+    <a href="#top" class="brand" aria-label="Sacha Llakta Viáticos">
+      <svg class="leaf" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 22C7 20 4 15.5 4 10c4.2 0 8 2.6 8 7.5C12 12 15 6 21 4c0 6.5-3.6 12-9 15Z" fill="#4CAF6E"/><path d="M12 22C7 20 4 15.5 4 10" stroke="#2FD37A" stroke-width="1" opacity=".5"/></svg>
+      Sacha <b>Llakta</b>
+    </a>
+    <nav class="nav-links" id="navlinks">
+      <a href="#como">Cómo funciona</a>
+      <a href="#features">Funciones</a>
+      <a href="#precios">Precios</a>
+      <a href="./sacha-llakta-empleado.html">Soy empleado</a>
+      <a href="./sacha-llakta-supervisor.html" class="btn btn-gold btn-sm">Crear mi empresa</a>
+    </nav>
+    <a href="./sacha-llakta-supervisor.html" class="btn btn-gold btn-sm">Empieza gratis</a>
+    <button class="hamb" id="hamb" aria-label="Menú">☰</button>
+  </div>
+</header>
+
+<!-- HERO -->
+<a id="top"></a>
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <span class="eyebrow">Control de viáticos en campo</span>
+      <h1>Cada viático de tu equipo, <span class="g">contado al centavo.</span></h1>
+      <p class="lead">Tu cuadrilla registra gastos y fotos de recibos desde el celular. Tú ves el saldo en tiempo real y descargas el reporte en PDF. Sin papeles perdidos, sin hojas de cálculo.</p>
+      <div class="hero-cta">
+        <a href="./sacha-llakta-supervisor.html" class="btn btn-green">Crear mi empresa gratis</a>
+        <a href="./sacha-llakta-empleado.html" class="btn btn-ghost">Soy empleado, tengo un código</a>
+      </div>
+      <div class="hero-trust">
+        <span><span class="dot"></span>14 días gratis</span>
+        <span>Sin tarjeta</span>
+        <span>Español e inglés</span>
+      </div>
+    </div>
+
+    <div class="hero-device reveal">
+      <div class="device">
+        <div class="device-float float-pdf">📄 Reporte PDF</div>
+        <div class="device-float float-sync">● En vivo</div>
+        <div class="ring-wrap">
+          <svg viewBox="0 0 210 210">
+            <defs><linearGradient id="ringgrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#2FD37A"/><stop offset="1" stop-color="#16B364"/>
+            </linearGradient></defs>
+            <circle class="ring-bg" cx="105" cy="105" r="90"/>
+            <circle class="ring-fg" id="ringfg" cx="105" cy="105" r="90"/>
+          </svg>
+          <div class="ring-center">
+            <div class="ring-amount" id="ringAmt">$0.00</div>
+            <div class="ring-label">Disponible</div>
+          </div>
+        </div>
+        <div class="stat-row">
+          <div class="stat"><div class="k">Inicial</div><div class="v muted" id="stInit">$0.00</div></div>
+          <div class="stat"><div class="k">Gastado</div><div class="v red" id="stSpent">$0.00</div></div>
+          <div class="stat"><div class="k">Disponible</div><div class="v green" id="stAvail">$0.00</div></div>
+        </div>
+        <div class="receipt" id="receipt">
+          <div class="ic">🍽️</div>
+          <div class="rt"><b>Almuerzo · cuadrilla</b><small>Comida · hoy 12:40 p.m.</small></div>
+          <div class="ra">−$24.50</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STEPS -->
+<section class="sec" id="como">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow" style="justify-content:center">Empieza en minutos</span>
+      <h2>De cero a tu equipo controlado en tres pasos</h2>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <span class="si">🏢</span>
+        <div class="num">01</div>
+        <h3>Crea tu empresa</h3>
+        <p>Te registras y obtienes tu panel de supervisor. 14 días gratis, sin tarjeta.</p>
+      </div>
+      <div class="step reveal" style="transition-delay:.08s">
+        <span class="si">🎫</span>
+        <div class="num">02</div>
+        <h3>Tu equipo se une</h3>
+        <p>Cada empleado entra con un código desde el navegador. No hay nada que instalar.</p>
+      </div>
+      <div class="step reveal" style="transition-delay:.16s">
+        <span class="si">📲</span>
+        <div class="num">03</div>
+        <h3>Gastos en tiempo real</h3>
+        <p>Registran gastos y fotos de recibos. Tú apruebas, ves el saldo y descargas el PDF por viaje.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="sec" id="features" style="padding-top:20px">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow" style="justify-content:center">Todo lo que necesitas</span>
+      <h2>Hecho para cuadrillas que se mueven</h2>
+      <p>Desde técnicos de campo hasta equipos de servicio: registra, controla y reporta cada dólar sin fricción.</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat reveal"><div class="fi">⚡</div><h3>Saldo en tiempo real</h3><p>Cada gasto se sincroniza al instante. Supervisor y empleado ven el mismo número, siempre.</p></div>
+      <div class="feat reveal"><div class="fi">📷</div><h3>Fotos de recibos</h3><p>Cada gasto lleva su comprobante adjunto. Nada de recibos arrugados en la guantera.</p></div>
+      <div class="feat reveal"><div class="fi">📄</div><h3>Reporte PDF por viaje</h3><p>Al cerrar un viaje se genera el reporte listo para contabilidad, con totales por categoría.</p></div>
+      <div class="feat reveal"><div class="fi">👛</div><h3>Saldo personal del empleado</h3><p>Define si el sobrante se acumula para el próximo viaje o queda como dinero del empleado.</p></div>
+      <div class="feat reveal"><div class="fi">👥</div><h3>Varios empleados y supervisores</h3><p>Agrega a todo tu equipo, asigna viáticos por persona y suma supervisores con un código.</p></div>
+      <div class="feat reveal"><div class="fi">📶</div><h3>Funciona sin señal</h3><p>El campo no siempre tiene cobertura. Registra offline y se sincroniza cuando vuelve la conexión.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="sec price-band" id="precios">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow" style="justify-content:center">Precios claros</span>
+      <h2>Elige el plan de tu equipo</h2>
+      <p>Empieza con 14 días gratis. Cambia o cancela cuando quieras.</p>
+    </div>
+    <div class="plans">
+      <div class="plan reveal">
+        <span class="tag" style="color:var(--gold);background:rgba(227,169,74,.12);border-color:rgba(227,169,74,.3)">Básico</span>
+        <h3>Para empezar</h3>
+        <div class="price">$9.99<small>/mes</small></div>
+        <div class="who">Equipos pequeños que arrancan con el control de viáticos.</div>
+        <ul>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Hasta 5 empleados</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Gastos y recibos ilimitados</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Reportes PDF</li>
+        </ul>
+        <a href="./sacha-llakta-supervisor.html" class="btn btn-ghost">Empezar</a>
+      </div>
+
+      <div class="plan pop reveal" style="transition-delay:.08s">
+        <span class="tag">Recomendado</span>
+        <h3>Pro</h3>
+        <div class="price">$24.99<small>/mes</small></div>
+        <div class="who">Para equipos en crecimiento que necesitan más gente y control.</div>
+        <ul>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Hasta 20 empleados</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Varios supervisores</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Gastos fuera de viaje</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Exportar a CSV y PDF</li>
+        </ul>
+        <a href="./sacha-llakta-supervisor.html" class="btn btn-green">Empezar</a>
+      </div>
+
+      <div class="plan reveal" style="transition-delay:.16s">
+        <span class="tag" style="color:var(--gold);background:rgba(227,169,74,.12);border-color:rgba(227,169,74,.3)">Empresa</span>
+        <h3>Sin límites</h3>
+        <div class="price">$59.99<small>/mes</small></div>
+        <div class="who">Para operaciones grandes con muchas cuadrillas en campo.</div>
+        <ul>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Empleados ilimitados</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Todo lo de Pro</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2FD37A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Soporte prioritario</li>
+        </ul>
+        <a href="./sacha-llakta-supervisor.html" class="btn btn-ghost">Empezar</a>
+      </div>
+    </div>
+    <p class="price-note">Todos los planes incluyen 14 días de prueba gratis. ¿Dudas? Escríbenos por WhatsApp.</p>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+  <div class="wrap">
+    <div class="cta-card reveal">
+      <h2>Toma el control de tus viáticos hoy</h2>
+      <p>Crea tu empresa en un minuto y dale a tu equipo la forma más simple de registrar gastos en campo.</p>
+      <div class="hero-cta">
+        <a href="./sacha-llakta-supervisor.html" class="btn btn-green">Crear mi empresa gratis</a>
+        <a href="#precios" class="btn btn-ghost">Ver precios</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <div class="brand">
+          <svg class="leaf" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 22C7 20 4 15.5 4 10c4.2 0 8 2.6 8 7.5C12 12 15 6 21 4c0 6.5-3.6 12-9 15Z" fill="#4CAF6E"/></svg>
+          Sacha <b>Llakta</b>
+        </div>
+        <p class="foot-tag">Control de viáticos para equipos en campo. Hecho con orgullo <span class="kichwa">kichwa-amazónico</span> — <span class="kichwa">Sacha Llakta</span>, tierra de selva.</p>
+      </div>
+      <div class="foot-links">
+        <div class="foot-col">
+          <h4>Producto</h4>
+          <a href="#como">Cómo funciona</a>
+          <a href="#features">Funciones</a>
+          <a href="#precios">Precios</a>
+        </div>
+        <div class="foot-col">
+          <h4>Acceso</h4>
+          <a href="./sacha-llakta-supervisor.html">Panel de supervisor</a>
+          <a href="./sacha-llakta-empleado.html">App de empleado</a>
+        </div>
+        <div class="foot-col">
+          <h4>Soporte</h4>
+          <a href="https://wa.me/18622471247" target="_blank" rel="noopener">WhatsApp</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© <span id="yr"></span> Sacha Llakta · Control de Viáticos</span>
+      <span>viaticos.sachallakta.com</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Year
+  document.getElementById('yr').textContent = new Date().getFullYear();
+
+  // Mobile menu
+  var hamb = document.getElementById('hamb'), links = document.getElementById('navlinks');
+  hamb.addEventListener('click', function(){ links.classList.toggle('open'); });
+  links.addEventListener('click', function(e){ if(e.target.tagName==='A') links.classList.remove('open'); });
+
+  // Reveal on scroll
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){ if(en.isIntersecting){ en.target.classList.add('in'); io.unobserve(en.target); } });
+  }, {threshold:.14});
+  document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+
+  // Ring + count-up hero animation
+  var r = 90, C = 2 * Math.PI * r;
+  var fg = document.getElementById('ringfg');
+  fg.style.strokeDasharray = C;
+  fg.style.strokeDashoffset = C;
+
+  var amtEl = document.getElementById('ringAmt'), initEl = document.getElementById('stInit'),
+      spentEl = document.getElementById('stSpent'), availEl = document.getElementById('stAvail'),
+      receipt = document.getElementById('receipt');
+  var BUDGET = 580, SPENT = 24.50;
+  function money(n){ return '$' + n.toFixed(2); }
+
+  if(reduce){
+    fg.style.strokeDashoffset = C * (1 - (BUDGET-SPENT)/BUDGET);
+    amtEl.textContent = money(BUDGET-SPENT); initEl.textContent = money(BUDGET);
+    spentEl.textContent = money(SPENT); availEl.textContent = money(BUDGET-SPENT);
+    receipt.classList.add('show');
+    return;
+  }
+
+  function animate(cb, dur){
+    var t0 = null;
+    function frame(ts){
+      if(!t0) t0 = ts;
+      var p = Math.min(1, (ts - t0)/dur);
+      var e = 1 - Math.pow(1-p, 3); // easeOutCubic
+      cb(e);
+      if(p < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function run(){
+    initEl.textContent = money(BUDGET);
+    // Phase 1: fill ring to full budget + count 0 -> 580
+    animate(function(e){
+      fg.style.strokeDashoffset = C * (1 - e);
+      var val = BUDGET * e;
+      amtEl.textContent = money(val);
+      availEl.textContent = money(val);
+    }, 1400);
+
+    // Phase 2: a receipt lands, available drops 580 -> 555.50
+    setTimeout(function(){
+      receipt.classList.add('show');
+      var start = BUDGET, end = BUDGET - SPENT;
+      animate(function(e){
+        var val = start + (end - start) * e;
+        amtEl.textContent = money(val);
+        availEl.textContent = money(val);
+        spentEl.textContent = money(SPENT * e);
+        fg.style.strokeDashoffset = C * (1 - val/BUDGET);
+      }, 900);
+    }, 1750);
+  }
+
+  // Kick off when the device scrolls into view (or immediately if already visible)
+  var device = document.querySelector('.device'), started = false;
+  var io2 = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){ if(en.isIntersecting && !started){ started = true; run(); io2.disconnect(); } });
+  }, {threshold:.4});
+  io2.observe(device);
+})();
+</script>
+</body>
+</html>
