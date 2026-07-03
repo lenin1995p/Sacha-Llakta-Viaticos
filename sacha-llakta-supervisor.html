@@ -37,7 +37,7 @@ body{padding-bottom:80px}
 .card-title{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px}
 
 /* LOGIN */
-.login-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 20px;text-align:center;background:linear-gradient(160deg,#0a0f1e,#111827 50%,#0a0f1e)}
+.login-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 20px;text-align:center;background:linear-gradient(160deg,#0a0f1e,#111827 50%,#0a0f1e);position:relative}
 .login-logo{font-size:54px;margin-bottom:14px}
 .login-title{font-size:25px;font-weight:800;background:linear-gradient(135deg,var(--rhino),var(--rhino2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}
 .login-sub{font-size:13px;color:var(--muted);margin-bottom:28px}
@@ -206,29 +206,30 @@ body{padding-bottom:80px}
 
 <!-- ════ LOGIN SCREEN ════ -->
 <div id="login-screen" class="login-wrap">
+  <button class="lang-btn" id="lang-btn-login" onclick="toggleLang()" style="position:absolute;top:16px;right:16px">EN</button>
   <div class="login-logo">🌿</div>
   <div class="login-title">Sacha Llakta</div>
   <div class="login-sub" id="login-sub">Panel de Supervisor · Control de Viáticos</div>
   <div class="login-card">
     <div class="card" style="text-align:left">
       <div class="tabs">
-        <button class="tab active" id="logintab-login" onclick="switchLoginTab('login')">Ingresar</button>
-        <button class="tab" id="logintab-register" onclick="switchLoginTab('register')">Crear</button>
-        <button class="tab" id="logintab-join" onclick="switchLoginTab('join')">Unirse</button>
+        <button class="tab active" id="logintab-login" onclick="switchLoginTab('login')" data-i="tab-login">Ingresar</button>
+        <button class="tab" id="logintab-register" onclick="switchLoginTab('register')" data-i="tab-register">Crear</button>
+        <button class="tab" id="logintab-join" onclick="switchLoginTab('join')" data-i="tab-join">Unirse</button>
       </div>
 
       <!-- LOGIN -->
       <div class="tab-panel active" id="loginpanel-login">
         <div class="field">
           <div class="field-label" id="lbl-sup-email">Correo del supervisor</div>
-          <input class="input" id="login-email" type="email" placeholder="correo@empresa.com" autocomplete="username">
+          <input class="input" id="login-email" type="email" placeholder="correo@empresa.com" autocomplete="username" data-i-ph="ph-email">
         </div>
         <div class="field">
           <div class="field-label" id="lbl-sup-pass">Contraseña</div>
           <input class="input" id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password">
         </div>
-        <button class="btn btn-rhino" id="btn-login" onclick="doLogin()">Ingresar</button>
-        <button class="btn-link" id="btn-forgot" onclick="forgotPassword()">¿Olvidaste tu contraseña?</button>
+        <button class="btn btn-rhino" id="btn-login" onclick="doLogin()" data-i="btn-login">Ingresar</button>
+        <button class="btn-link" id="btn-forgot" onclick="forgotPassword()" data-i="btn-forgot">¿Olvidaste tu contraseña?</button>
         <div id="login-err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center;display:none"></div>
         <div id="login-ok" style="color:var(--green);font-size:12px;margin-top:10px;text-align:center;display:none"></div>
       </div>
@@ -237,48 +238,48 @@ body{padding-bottom:80px}
       <div class="tab-panel" id="loginpanel-register">
         <div class="field">
           <div class="field-label" id="lbl-comp-name">Nombre de la empresa</div>
-          <input class="input" id="reg-company" placeholder="Ej: Rhino Tool House" autocomplete="off">
+          <input class="input" id="reg-company" placeholder="Ej: Rhino Tool House" autocomplete="off" data-i-ph="ph-company">
         </div>
         <div class="field">
           <div class="field-label" id="lbl-sup-name">Tu nombre (supervisor)</div>
-          <input class="input" id="reg-name" placeholder="Ej: Lenin Paredes" autocomplete="off">
+          <input class="input" id="reg-name" placeholder="Ej: Lenin Paredes" autocomplete="off" data-i-ph="ph-name">
         </div>
         <div class="field">
-          <div class="field-label">Correo</div>
-          <input class="input" id="reg-email" type="email" placeholder="correo@empresa.com" autocomplete="off">
+          <div class="field-label" data-i="lbl-correo">Correo</div>
+          <input class="input" id="reg-email" type="email" placeholder="correo@empresa.com" autocomplete="off" data-i-ph="ph-email">
         </div>
         <div class="field">
-          <div class="field-label">Contraseña (mín. 6 caracteres)</div>
+          <div class="field-label" data-i="lbl-pass-min">Contraseña (mín. 6 caracteres)</div>
           <input class="input" id="reg-pass" type="password" placeholder="••••••••" autocomplete="off">
         </div>
         <div class="field">
           <div class="field-label" id="lbl-comp-address">Dirección / sede (opcional)</div>
-          <input class="input" id="reg-address" placeholder="Ej: 123 Main St, Wichita, KS" autocomplete="off">
+          <input class="input" id="reg-address" placeholder="Ej: 123 Main St, Wichita, KS" autocomplete="off" data-i-ph="ph-address">
         </div>
-        <button class="btn btn-green" id="btn-register" onclick="doRegister()">Crear empresa</button>
+        <button class="btn btn-green" id="btn-register" onclick="doRegister()" data-i="btn-register">Crear empresa</button>
         <div id="reg-err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center;display:none"></div>
       </div>
 
       <!-- JOIN COMPANY -->
       <div class="tab-panel" id="loginpanel-join">
-        <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:12px">Únete a una empresa existente con el código que te comparte el supervisor principal. Tendrás acceso completo para gestionar empleados y viáticos (no a facturación).</div>
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:12px" data-i="join-desc">Únete a una empresa existente con el código que te comparte el supervisor principal. Tendrás acceso completo para gestionar empleados y viáticos (no a facturación).</div>
         <div class="field">
-          <div class="field-label">Código de empresa</div>
+          <div class="field-label" data-i="lbl-join-code">Código de empresa</div>
           <input class="input" id="join-code" placeholder="Ej: RHINO-CO-4821" autocomplete="off" style="text-transform:uppercase">
         </div>
         <div class="field">
-          <div class="field-label">Tu nombre (supervisor)</div>
-          <input class="input" id="join-name" placeholder="Ej: María López" autocomplete="off">
+          <div class="field-label" id="lbl-join-name" data-i="lbl-sup-name">Tu nombre (supervisor)</div>
+          <input class="input" id="join-name" placeholder="Ej: María López" autocomplete="off" data-i-ph="ph-name-maria">
         </div>
         <div class="field">
-          <div class="field-label">Correo</div>
-          <input class="input" id="join-email" type="email" placeholder="correo@empresa.com" autocomplete="off">
+          <div class="field-label" data-i="lbl-correo">Correo</div>
+          <input class="input" id="join-email" type="email" placeholder="correo@empresa.com" autocomplete="off" data-i-ph="ph-email">
         </div>
         <div class="field">
-          <div class="field-label">Contraseña (mín. 6 caracteres)</div>
+          <div class="field-label" data-i="lbl-pass-min">Contraseña (mín. 6 caracteres)</div>
           <input class="input" id="join-pass" type="password" placeholder="••••••••" autocomplete="off">
         </div>
-        <button class="btn btn-green" id="btn-join" onclick="doJoin()">Unirse a la empresa</button>
+        <button class="btn btn-green" id="btn-join" onclick="doJoin()" data-i="btn-join">Unirse a la empresa</button>
         <div id="join-err" style="color:var(--red);font-size:12px;margin-top:10px;text-align:center;display:none"></div>
       </div>
     </div>
@@ -427,10 +428,17 @@ const T = {
     'login-note':'Tus datos se sincronizan de forma segura en la nube',
     'lbl-sup-email':'Correo del supervisor','lbl-sup-pass':'Contraseña',
     'lbl-comp-name':'Nombre de la empresa','lbl-sup-name':'Tu nombre (supervisor)','lbl-comp-address':'Dirección / sede (opcional)',
+    'lbl-correo':'Correo','lbl-pass-min':'Contraseña (mín. 6 caracteres)','lbl-join-code':'Código de empresa',
     'tab-feed':'En vivo','tab-employees':'Empleados','tab-reports':'Reportes','tab-account':'Cuenta',
     'st-empleados':'Empleados','st-viajes':'Viajes activos','st-hoy':'Gastado hoy',
     'title-feed':'Actividad en tiempo real','btn-add-emp':'+ Agregar empleado',
     'btn-excel':'📊 Exportar a Excel (CSV)','title-all-expenses':'Todos los gastos',
+    'tab-login':'Ingresar','tab-register':'Crear','tab-join':'Unirse',
+    'btn-login':'Ingresar','btn-forgot':'¿Olvidaste tu contraseña?',
+    'btn-register':'Crear empresa','btn-join':'Unirse a la empresa',
+    'join-desc':'Únete a una empresa existente con el código que te comparte el supervisor principal. Tendrás acceso completo para gestionar empleados y viáticos (no a facturación).',
+    'ph-email':'correo@empresa.com','ph-company':'Ej: Rhino Tool House','ph-name':'Ej: Lenin Paredes',
+    'ph-address':'Ej: 123 Main St, Wichita, KS','ph-name-maria':'Ej: María López',
     'lang':'EN'
   },
   en:{
@@ -438,10 +446,17 @@ const T = {
     'login-note':'Your data syncs securely in the cloud',
     'lbl-sup-email':'Supervisor email','lbl-sup-pass':'Password',
     'lbl-comp-name':'Company name','lbl-sup-name':'Your name (supervisor)','lbl-comp-address':'Address / location (optional)',
+    'lbl-correo':'Email','lbl-pass-min':'Password (min. 6 characters)','lbl-join-code':'Company code',
     'tab-feed':'Live','tab-employees':'Employees','tab-reports':'Reports','tab-account':'Account',
     'st-empleados':'Employees','st-viajes':'Active trips','st-hoy':'Spent today',
     'title-feed':'Real-time activity','btn-add-emp':'+ Add employee',
     'btn-excel':'📊 Export to Excel (CSV)','title-all-expenses':'All expenses',
+    'tab-login':'Log in','tab-register':'Create','tab-join':'Join',
+    'btn-login':'Log in','btn-forgot':'Forgot your password?',
+    'btn-register':'Create company','btn-join':'Join company',
+    'join-desc':'Join an existing company with the code the main supervisor shares with you. You\'ll have full access to manage employees and expenses (not billing).',
+    'ph-email':'email@company.com','ph-company':'E.g: Rhino Tool House','ph-name':'E.g: Lenin Paredes',
+    'ph-address':'E.g: 123 Main St, Wichita, KS','ph-name-maria':'E.g: Maria Lopez',
     'lang':'ES'
   }
 };
@@ -449,10 +464,12 @@ let lang = localStorage.getItem('sl_sup_lang') || 'es';
 function t(k){return (T[lang]||T.es)[k]||k;}
 function applyLang(){
   document.querySelectorAll('[data-i]').forEach(el=>{el.textContent=t(el.getAttribute('data-i'));});
+  document.querySelectorAll('[data-i-ph]').forEach(el=>{el.setAttribute('placeholder',t(el.getAttribute('data-i-ph')));});
   ['login-sub','login-note','lbl-sup-email','lbl-sup-pass','lbl-comp-name','lbl-sup-name','lbl-comp-address'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.textContent=t(id);
   });
-  document.getElementById('lang-btn').textContent=t('lang');
+  const lb1=document.getElementById('lang-btn'); if(lb1) lb1.textContent=t('lang');
+  const lb2=document.getElementById('lang-btn-login'); if(lb2) lb2.textContent=t('lang');
 }
 function toggleLang(){
   lang=lang==='es'?'en':'es';
