@@ -387,13 +387,15 @@ const STRIPE_LINKS = {
   enterprise: "https://buy.stripe.com/8x2cN443X9ZM0vt6W0gw002"   // Plan Empresa ($59.99/mes) - LIVE
 };
 
-// Build the Stripe checkout URL with this company's id attached, so the payment
-// webhook can identify and activate the exact company after a successful payment.
+// Build the Stripe checkout URL with this company's id AND the chosen plan attached
+// (as client_reference_id = "companyId__planKey"), so the payment webhook can
+// activate the exact company with the exact plan after a successful payment.
 function stripeLink(key){
   const base = STRIPE_LINKS[key];
   if(!base) return base;
   const params = [];
-  if(typeof companyId !== 'undefined' && companyId) params.push('client_reference_id=' + encodeURIComponent(companyId));
+  const cid = (typeof companyId !== 'undefined' && companyId) ? companyId : '';
+  if(cid) params.push('client_reference_id=' + encodeURIComponent(cid + '__' + key));
   const email = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email : '';
   if(email) params.push('prefilled_email=' + encodeURIComponent(email));
   if(!params.length) return base;
