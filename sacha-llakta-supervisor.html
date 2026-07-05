@@ -313,9 +313,9 @@ body{padding-bottom:80px}
     <!-- LIVE FEED -->
     <div class="tab-panel active" id="panel-feed">
       <div class="stats-row">
-        <div class="stat-card"><div class="stat-label" data-i="st-empleados">Empleados</div><div class="stat-val" id="st-emp-count" style="color:var(--rhino)">0</div></div>
-        <div class="stat-card"><div class="stat-label" data-i="st-viajes">Viajes activos</div><div class="stat-val" id="st-active-trips" style="color:var(--green)">0</div></div>
-        <div class="stat-card"><div class="stat-label" data-i="st-hoy">Gastado hoy</div><div class="stat-val" id="st-today" style="color:var(--red)">$0</div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="openLiveEmployees()"><div class="stat-label" data-i="st-empleados">Empleados</div><div class="stat-val" id="st-emp-count" style="color:var(--rhino)">0</div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="openLiveActiveTrips()"><div class="stat-label" data-i="st-viajes">Viajes activos</div><div class="stat-val" id="st-active-trips" style="color:var(--green)">0</div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="openLiveSpentToday()"><div class="stat-label" data-i="st-hoy">Gastado hoy</div><div class="stat-val" id="st-today" style="color:var(--red)">$0</div></div>
       </div>
       <div class="card-title" data-i="title-feed">Actividad en tiempo real</div>
       <div id="feed-list"><div class="loading"><div class="spinner"></div>Conectando…</div></div>
@@ -513,6 +513,7 @@ let unsubExpenses=null;
 let unsubEmployees=null;
 let unsubTrips=null;
 let unsubSupervisors=null;
+let unsubCompany=null;
 let supervisorsList=[];
 let reportFilter='all';
 let pendingShowRegister=false;
@@ -837,6 +838,7 @@ function doLogout(){
   if(unsubEmployees){unsubEmployees();unsubEmployees=null;}
   if(unsubTrips){unsubTrips();unsubTrips=null;}
   if(unsubSupervisors){unsubSupervisors();unsubSupervisors=null;}
+  if(unsubCompany){unsubCompany();unsubCompany=null;}
   employees=[];allExpenses=[];trips=[];companyData=null;companyId=null;
   supervisorsList=[];
   myRole='owner';myName='';
@@ -904,6 +906,7 @@ async function loadSupervisorContext(){
   subscribeEmployees();
   subscribeExpenses();
   subscribeTrips();
+  subscribeCompany();
   if(myRole==='owner') subscribeSupervisors();
   // Si la empresa (dueño) aún no eligió plan/trial/VIP → mostrar candado de activación.
   // Los supervisores invitados NO ven esto: si la empresa no tiene acceso, se les avisa distinto.
@@ -1001,6 +1004,29 @@ function confirmPaidRefresh(){
   })();
 }
 
+// ═══ REALTIME: COMPANY DOC (plan / activación en vivo) ═══
+// Escucha cambios del documento de la empresa. Cuando el webhook de Stripe activa
+// el plan (pending/trial → basic/pro/enterprise), la app lo refleja al instante:
+// quita el candado y actualiza la pestaña Cuenta, sin tener que tocar "Ya pagué".
+function subscribeCompany(){
+  if(!companyId) return;
+  try{
+    unsubCompany=FB.onSnapshot(FB.doc(FB.db,'companies',companyId),(cs)=>{
+      if(!cs.exists()) return;
+      const wasLocked=!hasChosenAccess();
+      companyData=cs.data();
+      const hc=document.getElementById('hdr-company'); if(hc) hc.textContent=companyData.company||'';
+      // Si estaba bloqueada y ahora tiene acceso (el pago activó el plan) → quitar candado.
+      if(wasLocked && hasChosenAccess()){
+        try{ closeModal(); }catch(e){}
+        showToast(lang==='es'?'✓ ¡Plan activado! Bienvenido.':'✓ Plan activated! Welcome.');
+      }
+      const acct=document.getElementById('panel-account');
+      if(acct&&acct.classList.contains('active')){ try{ renderAccount(); }catch(e){} }
+    },(err)=>{ console.warn('company subscribe error',err); });
+  }catch(e){ console.warn('subscribeCompany',e); }
+}
+
 // ═══ REALTIME: TEAM SUPERVISORS (owner only) ═══
 function subscribeSupervisors(){
   try{
@@ -1064,6 +1090,103 @@ function updateStats(){
     }
   });
   document.getElementById('st-today').textContent='$'+todaySpent.toFixed(0);
+}
+
+// ═══ EN VIVO: DETALLE AL HACER CLIC (item interactivo) ═══
+// Cabecera común con botón de regresar para todos los detalles.
+function liveModalShell(title, subtitle, body){
+  const es=lang==='es';
+  return `
+    <div style="display:flex;align-items:center;margin-bottom:4px">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()" style="padding:6px 12px">← ${es?'Volver':'Back'}</button>
+    </div>
+    <div class="modal-title" style="margin-top:8px">${title}</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px">${subtitle}</div>
+    <div style="max-height:62vh;overflow-y:auto;margin:0 -4px;padding:0 4px">${body}</div>`;
+}
+
+// Empleados → lista completa (nombre + estado).
+function openLiveEmployees(){
+  const es=lang==='es';
+  let rows;
+  if(!employees.length){
+    rows=`<div style="text-align:center;color:var(--muted);padding:22px 0">${es?'Aún no hay empleados.':'No employees yet.'}</div>`;
+  }else{
+    rows=employees.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(e=>{
+      const badge=e.tripActive
+        ? `<span class="rg-tag" style="background:rgba(34,197,94,.15);color:var(--green);border-color:rgba(34,197,94,.3)">${es?'En viaje':'On trip'}</span>`
+        : `<span class="rg-tag" style="background:rgba(148,163,184,.12);color:var(--muted);border-color:rgba(148,163,184,.25)">${es?'Inactivo':'Idle'}</span>`;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--border)">
+        <div style="min-width:0"><div style="font-weight:700;font-size:14.5px">${esc(e.name||'—')}</div><div style="font-size:12px;color:var(--muted)">${esc(e.role||e.code||'')}</div></div>
+        ${badge}
+      </div>`;
+    }).join('');
+  }
+  showModal(liveModalShell(es?'👥 Empleados':'👥 Employees', employees.length+' '+(es?'en total':'total'), rows), true);
+}
+
+// Viajes activos → empleados en viaje, cada uno con nota privada (se guarda en la nube).
+function openLiveActiveTrips(){
+  const es=lang==='es';
+  const active=employees.filter(e=>e.tripActive);
+  const uid=(currentUser&&currentUser.uid)||'';
+  let rows;
+  if(!active.length){
+    rows=`<div style="text-align:center;color:var(--muted);padding:22px 0">${es?'Ningún empleado en viaje activo ahora.':'No employees on an active trip right now.'}</div>`;
+  }else{
+    rows=active.map(e=>{
+      const note=(e.notes&&uid&&e.notes[uid])?e.notes[uid]:'';
+      return `<div style="padding:13px 0;border-bottom:1px solid var(--border)">
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px">🧳 ${esc(e.name||'—')}</div>
+        <textarea class="input" id="empnote-${e.id}" rows="2" style="resize:vertical;font-size:13.5px" placeholder="${es?'Nota privada (solo tú la ves)…':'Private note (only you can see it)…'}">${esc(note)}</textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:6px">
+          <button class="btn btn-ghost btn-sm" onclick="saveEmpNote('${e.id}')">💾 ${es?'Guardar nota':'Save note'}</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  showModal(liveModalShell(es?'🧳 Viajes activos':'🧳 Active trips', active.length+' '+(es?'en viaje':'on trip'), rows), true);
+}
+
+// Guarda la nota privada del supervisor sobre un empleado (mapa notes.{uid} en la nube).
+async function saveEmpNote(empId){
+  const es=lang==='es';
+  const ta=document.getElementById('empnote-'+empId);
+  const uid=(currentUser&&currentUser.uid)||'';
+  if(!ta||!uid||!companyId) return;
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',empId),{['notes.'+uid]:ta.value.trim()});
+    showToast(es?'✓ Nota guardada':'✓ Note saved');
+  }catch(err){ showToast('Error: '+err.message); }
+}
+
+// Gastado hoy → lista de empleados que gastaron hoy, con el monto de cada uno.
+function openLiveSpentToday(){
+  const es=lang==='es';
+  const today=new Date();today.setHours(0,0,0,0);
+  const byEmp={};
+  allExpenses.forEach(ex=>{
+    if(ex.createdAt&&ex.createdAt.toDate){
+      const d=ex.createdAt.toDate();
+      if(d>=today){ const id=ex.employeeId||'—'; byEmp[id]=(byEmp[id]||0)+(ex.monto||0); }
+    }
+  });
+  const entries=Object.entries(byEmp).sort((a,b)=>b[1]-a[1]);
+  let rows;
+  if(!entries.length){
+    rows=`<div style="text-align:center;color:var(--muted);padding:22px 0">${es?'Nadie ha gastado hoy.':'No spending today.'}</div>`;
+  }else{
+    rows=entries.map(([id,total])=>{
+      const emp=employees.find(e=>e.id===id);
+      const name=emp?emp.name:(es?'Empleado':'Employee');
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--border)">
+        <div style="font-weight:700;font-size:14.5px">${esc(name)}</div>
+        <div style="font-weight:800;color:var(--red)">-$${total.toFixed(2)}</div>
+      </div>`;
+    }).join('');
+  }
+  const grand=entries.reduce((s,[,t])=>s+t,0);
+  showModal(liveModalShell(es?'💸 Gastado hoy':'💸 Spent today', '$'+grand.toFixed(2)+' · '+entries.length+' '+(es?'empleados':'employees'), rows), true);
 }
 
 // ═══ RENDER FEED ═══
@@ -2884,6 +3007,7 @@ window.finishCancel=finishCancel;
 window.editCompanyAddress=editCompanyAddress;window.saveCompanyAddress=saveCompanyAddress;window.adminGrantPlan=adminGrantPlan;
 window.editSupervisorPhone=editSupervisorPhone;window.saveSupervisorPhone=saveSupervisorPhone;
 window.editAmount=editAmount;window.saveAmount=saveAmount;
+window.openLiveEmployees=openLiveEmployees;window.openLiveActiveTrips=openLiveActiveTrips;window.openLiveSpentToday=openLiveSpentToday;window.saveEmpNote=saveEmpNote;
 window.toggleCompanyOutOfTrip=toggleCompanyOutOfTrip;window.toggleEmployeeOutOfTrip=toggleEmployeeOutOfTrip;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
