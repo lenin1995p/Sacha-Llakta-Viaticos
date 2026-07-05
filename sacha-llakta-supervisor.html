@@ -308,6 +308,7 @@ body{padding-bottom:80px}
       <button class="tab" id="tab-employees" onclick="switchTab('employees')" data-i="tab-employees">Empleados</button>
       <button class="tab" id="tab-reports" onclick="switchTab('reports')" data-i="tab-reports">Reportes</button>
       <button class="tab" id="tab-account" onclick="switchTab('account')" data-i="tab-account">Cuenta</button>
+      <button class="tab" id="tab-admin" onclick="switchTab('admin')" style="display:none;color:var(--yellow)">🌐 Admin</button>
     </div>
 
     <!-- LIVE FEED -->
@@ -338,6 +339,11 @@ body{padding-bottom:80px}
     <!-- ACCOUNT -->
     <div class="tab-panel" id="panel-account">
       <div id="account-content"></div>
+    </div>
+
+    <!-- SUPER ADMIN (founder only) -->
+    <div class="tab-panel" id="panel-admin">
+      <div id="admin-content"></div>
     </div>
   </div>
 </div>
@@ -2214,6 +2220,7 @@ function switchTab(name){
   document.getElementById('tab-'+name).classList.add('active');
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='account') renderAccount();
+  if(name==='admin') renderAdminTab();
 }
 
 // ═══ ACCOUNT PANEL ═══
@@ -2506,6 +2513,192 @@ async function adminGrantPlan(kind){
     renderAccount();
     showToast((es?'✓ Plan otorgado: ':'✓ Plan granted: ')+label);
   }catch(e){showToast('Error: '+e.message);}
+}
+
+// ═══════════════════════════════════════════════════════
+// SUPER ADMIN PANEL (solo fundadores) — control total de TODAS las empresas
+// ═══════════════════════════════════════════════════════
+let adminCompanies=[];
+let adminLoaded=false;
+let adminFilter='';
+
+async function renderAdminTab(){
+  const el=document.getElementById('admin-content');
+  const es=lang==='es';
+  if(!isAdminUser()){ el.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted)">Solo super-admin.</div>'; return; }
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
+      <div style="font-weight:800;font-size:18px">🌐 ${es?'Todas las empresas':'All companies'}</div>
+      <button class="btn btn-ghost btn-sm" onclick="adminRefresh()">🔄 ${es?'Actualizar':'Refresh'}</button>
+    </div>
+    <input class="input" id="admin-search" placeholder="${es?'Buscar por nombre, correo o código…':'Search by name, email or code…'}" oninput="adminOnSearch(this.value)" style="margin-bottom:12px">
+    <div id="admin-summary" style="font-size:12.5px;color:var(--muted);margin-bottom:14px"></div>
+    <div id="admin-list"><div class="loading"><div class="spinner"></div>${es?'Cargando…':'Loading…'}</div></div>`;
+  if(!adminLoaded) await loadAllCompanies();
+  renderAdminList();
+}
+function adminOnSearch(v){ adminFilter=v; renderAdminList(); }
+function adminRefresh(){ adminLoaded=false; renderAdminTab(); }
+
+async function loadAllCompanies(){
+  try{
+    const qs=await FB.getDocs(FB.collection(FB.db,'companies'));
+    adminCompanies=qs.docs.map(d=>Object.assign({id:d.id}, d.data()));
+    adminLoaded=true;
+  }catch(e){
+    const el=document.getElementById('admin-list'); if(el) el.innerHTML='<div style="padding:20px;color:var(--red)">Error: '+esc(e.message)+'</div>';
+  }
+}
+
+function adminPlanTag(plan,vip){
+  const es=lang==='es';
+  if(vip) return `<span class="rg-tag" style="background:rgba(227,169,74,.15);color:var(--yellow);border-color:rgba(227,169,74,.3)">VIP</span>`;
+  const map={
+    pending:[es?'Pendiente':'Pending','rgba(148,163,184,.15)','var(--muted)'],
+    trial:['Trial','rgba(227,169,74,.15)','var(--yellow)'],
+    basic:[es?'Básico':'Basic','rgba(59,130,246,.15)','var(--blue)'],
+    pro:['Pro','rgba(34,197,94,.15)','var(--green)'],
+    enterprise:[es?'Empresa':'Enterprise','rgba(167,139,250,.18)','#a78bfa'],
+    expired:[es?'Expirado':'Expired','rgba(242,109,109,.15)','var(--red)'],
+    cancelled:[es?'Cancelado':'Cancelled','rgba(242,109,109,.15)','var(--red)']
+  };
+  const m=map[plan]||[plan||'—','rgba(148,163,184,.15)','var(--muted)'];
+  return `<span class="rg-tag" style="background:${m[1]};color:${m[2]};border-color:${m[1]}">${m[0]}</span>`;
+}
+
+function renderAdminList(){
+  const el=document.getElementById('admin-list'); if(!el) return;
+  const es=lang==='es';
+  const f=adminFilter.toLowerCase().trim();
+  let list=adminCompanies.filter(c=>{
+    if(!f) return true;
+    return (c.company||'').toLowerCase().includes(f)
+      || (c.supervisorEmail||'').toLowerCase().includes(f)
+      || (c.supervisorName||'').toLowerCase().includes(f)
+      || (c.companyCode||'').toLowerCase().includes(f);
+  });
+  list.sort((a,b)=>{
+    const ta=(a.createdAt&&a.createdAt.toDate)?a.createdAt.toDate().getTime():0;
+    const tb=(b.createdAt&&b.createdAt.toDate)?b.createdAt.toDate().getTime():0;
+    return tb-ta;
+  });
+  // Resumen por plan
+  const byPlan={};
+  adminCompanies.forEach(c=>{ const p=c.vip?'vip':(c.plan||'pending'); byPlan[p]=(byPlan[p]||0)+1; });
+  const summ=document.getElementById('admin-summary');
+  if(summ) summ.textContent=adminCompanies.length+' '+(es?'empresas':'companies')+(Object.keys(byPlan).length?' · '+Object.entries(byPlan).map(([p,n])=>n+' '+p).join(' · '):'');
+
+  el.innerHTML = list.length ? list.map(c=>{
+    const created=(c.createdAt&&c.createdAt.toDate)?c.createdAt.toDate().toLocaleDateString(es?'es-US':'en-US'):'—';
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:15px 16px;margin-bottom:12px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+        <div style="min-width:0">
+          <div style="font-weight:800;font-size:15.5px">${esc(c.company||'—')}</div>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:2px">${esc(c.supervisorName||'')}${c.supervisorEmail?' · '+esc(c.supervisorEmail):''}</div>
+          <div style="font-size:11.5px;color:var(--dim);margin-top:3px">${esc(c.companyCode||'—')} · ${es?'Creada':'Created'} ${created}</div>
+        </div>
+        <div>${adminPlanTag(c.plan,c.vip)}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn btn-ghost btn-sm" onclick="adminPlanMenu('${c.id}')">💵 ${es?'Plan':'Plan'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="adminViewCompany('${c.id}')">👁 ${es?'Ver':'View'}</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="adminDeleteCompany('${c.id}')">🗑️ ${es?'Eliminar':'Delete'}</button>
+      </div>
+    </div>`;
+  }).join('') : `<div style="text-align:center;color:var(--muted);padding:24px 0">${es?'Sin resultados.':'No results.'}</div>`;
+}
+
+function adminPlanMenu(cid){
+  const es=lang==='es';
+  const c=adminCompanies.find(x=>x.id===cid); if(!c) return;
+  const opt=(kind,label,color)=>`<button class="btn btn-ghost" style="width:100%;justify-content:center;margin-bottom:8px;${color?'color:'+color:''}" onclick="adminSetPlan('${cid}','${kind}')">${label}</button>`;
+  showModal(`
+    <div class="modal-title">💵 ${esc(c.company||'')}</div>
+    <div style="font-size:13px;color:var(--muted);margin:6px 0 16px">${es?'Plan actual':'Current plan'}: <b>${esc(c.vip?'VIP':(c.plan||'pending'))}</b></div>
+    ${opt('basic',es?'Plan Básico':'Basic plan')}
+    ${opt('pro',es?'Plan Pro':'Pro plan')}
+    ${opt('enterprise',es?'Plan Empresa':'Enterprise plan')}
+    ${opt('trial',es?'Prueba 14 días':'14-day trial')}
+    ${opt('courtesy30',es?'🎁 Cortesía 30 días':'🎁 Courtesy 30 days')}
+    ${opt('vip',es?'♾️ VIP ilimitado':'♾️ VIP unlimited','var(--yellow)')}
+    ${opt('expired',es?'⛔ Expirar / bloquear':'⛔ Expire / lock','var(--red)')}
+    <button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>`);
+}
+
+async function adminSetPlan(cid, kind){
+  const es=lang==='es';
+  let updates;
+  if(kind==='courtesy30') updates={plan:'trial', planStart:FB.serverTimestamp(), courtesyDays:30, vip:false};
+  else if(kind==='vip') updates={plan:'enterprise', planStart:FB.serverTimestamp(), vip:true, grantedUnlimited:true};
+  else if(kind==='trial') updates={plan:'trial', planStart:FB.serverTimestamp(), courtesyDays:null, vip:false};
+  else if(kind==='expired') updates={plan:'expired', paidActive:false, vip:false};
+  else updates={plan:kind, planStart:FB.serverTimestamp(), vip:false};
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',cid),updates);
+    const c=adminCompanies.find(x=>x.id===cid); if(c) Object.assign(c,updates);
+    closeModal();
+    renderAdminList();
+    showToast(es?'✓ Plan actualizado':'✓ Plan updated');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+async function adminViewCompany(cid){
+  const es=lang==='es';
+  const c=adminCompanies.find(x=>x.id===cid); if(!c) return;
+  showModal(`<div class="loading"><div class="spinner"></div>${es?'Cargando…':'Loading…'}</div>`);
+  try{
+    const empSnap=await FB.getDocs(FB.collection(FB.db,'companies',cid,'employees'));
+    const expSnap=await FB.getDocs(FB.collection(FB.db,'companies',cid,'expenses'));
+    const emps=empSnap.docs.map(d=>Object.assign({id:d.id},d.data()));
+    const exps=expSnap.docs.map(d=>d.data());
+    const totalSpend=exps.reduce((s,e)=>s+(e.monto||0),0);
+    const empRows = emps.length ? emps.map(e=>{
+      const spent=exps.filter(x=>x.employeeId===e.id).reduce((s,x)=>s+(x.monto||0),0);
+      return `<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
+        <div><div style="font-weight:700;font-size:13.5px">${esc(e.name||'—')}</div><div style="font-size:11px;color:var(--muted)">${e.tripActive?(es?'En viaje':'On trip'):(es?'Inactivo':'Idle')}</div></div>
+        <div style="font-weight:700;color:var(--red)">-$${spent.toFixed(2)}</div>
+      </div>`;
+    }).join('') : `<div style="color:var(--muted);padding:14px 0;text-align:center">${es?'Sin empleados.':'No employees.'}</div>`;
+    showModal(`
+      <div style="display:flex;align-items:center;margin-bottom:4px"><button class="btn btn-ghost btn-sm" onclick="closeModal()" style="padding:6px 12px">← ${es?'Volver':'Back'}</button></div>
+      <div class="modal-title" style="margin-top:8px">👁 ${esc(c.company||'')}</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:6px">${esc(c.supervisorEmail||'')} · ${adminPlanTag(c.plan,c.vip)}</div>
+      <div style="display:flex;gap:8px;margin:12px 0">
+        <div style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--dim);text-transform:uppercase">${es?'Empleados':'Employees'}</div><div style="font-weight:800;font-size:17px">${emps.length}</div></div>
+        <div style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--dim);text-transform:uppercase">${es?'Gasto total':'Total spend'}</div><div style="font-weight:800;font-size:17px;color:var(--red)">$${totalSpend.toFixed(2)}</div></div>
+      </div>
+      <div style="max-height:44vh;overflow-y:auto">${empRows}</div>`, true);
+  }catch(e){ showModal(`<div style="padding:20px;color:var(--red)">Error: ${esc(e.message)}</div><button class="btn btn-ghost" style="width:100%" onclick="closeModal()">OK</button>`); }
+}
+
+function adminDeleteCompany(cid){
+  const es=lang==='es';
+  const c=adminCompanies.find(x=>x.id===cid); if(!c) return;
+  showModal(`
+    <div class="modal-icon">🗑️</div>
+    <div class="modal-title">${es?'¿Eliminar esta empresa?':'Delete this company?'}</div>
+    <div class="modal-body">${esc(c.company||'')}${c.supervisorEmail?' — '+esc(c.supervisorEmail):''}<br><br>${es?'Se borrará la empresa y todos sus datos (empleados, gastos, viajes). No se puede deshacer.':'The company and all its data (employees, expenses, trips) will be deleted. This cannot be undone.'}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-ghost" style="color:var(--red)" onclick="adminDoDeleteCompany('${cid}')">${es?'Sí, eliminar':'Yes, delete'}</button>
+    </div>`);
+}
+
+async function adminDoDeleteCompany(cid){
+  const es=lang==='es';
+  const c=adminCompanies.find(x=>x.id===cid);
+  try{
+    for(const sub of ['employees','expenses','trips']){
+      const qs=await FB.getDocs(FB.collection(FB.db,'companies',cid,sub));
+      for(const d of qs.docs){ try{ await FB.deleteDoc(d.ref); }catch(e){} }
+    }
+    if(c&&c.companyCode){ try{ await FB.deleteDoc(FB.doc(FB.db,'companyCodes',c.companyCode)); }catch(e){} }
+    await FB.deleteDoc(FB.doc(FB.db,'companies',cid));
+    adminCompanies=adminCompanies.filter(x=>x.id!==cid);
+    closeModal();
+    renderAdminList();
+    showToast(es?'✓ Empresa eliminada':'✓ Company deleted');
+  }catch(e){ showToast('Error: '+e.message); }
 }
 
 // ═══ INICIAR TRIAL DE 14 DÍAS ═══
@@ -2866,7 +3059,10 @@ function showLogin(){
     showToast(lang==='es'?'Crea tu nueva empresa con un correo diferente':'Create your new company with a different email');
   }
 }
-function showApp(){document.getElementById('login-screen').classList.add('hidden');document.getElementById('main-app').classList.remove('hidden');applyLang();}
+function showApp(){document.getElementById('login-screen').classList.add('hidden');document.getElementById('main-app').classList.remove('hidden');applyLang();
+  // La pestaña de super-admin solo aparece para los correos de fundador.
+  const at=document.getElementById('tab-admin'); if(at) at.style.display=isAdminUser()?'':'none';
+}
 function showModal(html,wide,locked){
   const bgClick = locked ? '' : 'onclick="if(event.target===this)closeModal()"';
   document.getElementById('modal-layer').innerHTML=`<div class="modal-bg" ${bgClick}><div class="modal${wide?' modal-wide':''}">${html}</div></div>`;
@@ -3008,6 +3204,7 @@ window.editCompanyAddress=editCompanyAddress;window.saveCompanyAddress=saveCompa
 window.editSupervisorPhone=editSupervisorPhone;window.saveSupervisorPhone=saveSupervisorPhone;
 window.editAmount=editAmount;window.saveAmount=saveAmount;
 window.openLiveEmployees=openLiveEmployees;window.openLiveActiveTrips=openLiveActiveTrips;window.openLiveSpentToday=openLiveSpentToday;window.saveEmpNote=saveEmpNote;
+window.renderAdminTab=renderAdminTab;window.adminOnSearch=adminOnSearch;window.adminRefresh=adminRefresh;window.adminPlanMenu=adminPlanMenu;window.adminSetPlan=adminSetPlan;window.adminViewCompany=adminViewCompany;window.adminDeleteCompany=adminDeleteCompany;window.adminDoDeleteCompany=adminDoDeleteCompany;
 window.toggleCompanyOutOfTrip=toggleCompanyOutOfTrip;window.toggleEmployeeOutOfTrip=toggleEmployeeOutOfTrip;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
