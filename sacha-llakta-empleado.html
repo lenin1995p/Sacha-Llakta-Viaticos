@@ -700,6 +700,9 @@ window.addEventListener('firebase-ready',()=>{
   // If this device is already linked, start watching for expulsion
   if(S&&S.linked&&S.companyId&&S.employeeCode){
     startWatchdog();
+    // Empuja el saldo personal actual a la nube al abrir, para que el supervisor
+    // siempre vea el valor correcto (evita desfases entre app de empleado y supervisor).
+    try{ syncWallet(); }catch(e){}
   }
 });
 
