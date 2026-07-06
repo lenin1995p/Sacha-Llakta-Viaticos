@@ -2297,6 +2297,8 @@ function renderAccount(){
     }
   }
 
+  // ¿La empresa ya tiene una suscripción de Stripe activa? (para no crear duplicados).
+  const hasSub = !!(companyData && companyData.stripeCustomerId);
   const planCardHtml = admin
     ? `<div class="acct-card">
       <div class="acct-plan-label">${es?'TU PLAN':'YOUR PLAN'}</div>
@@ -2307,14 +2309,17 @@ function renderAccount(){
       <div class="acct-plan-label">${es?'TU PLAN':'YOUR PLAN'}</div>
       <div class="acct-plan-name">${ti.label}</div>
       ${planStatusLine}
-      <button class="btn btn-rhino" style="margin-top:14px" onclick="showPlans()">${es?'Ver planes / Mejorar':'View plans / Upgrade'}</button>
+      ${hasSub
+        ? `<button class="btn btn-rhino" style="margin-top:14px" onclick="openBillingPortal()">🔧 ${es?'Administrar suscripción':'Manage subscription'}</button>
+           <div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.4">${es?'Cambia de plan, actualiza tu tarjeta o cancela — con el cobro correcto.':'Switch plan, update your card, or cancel — with correct billing.'}</div>`
+        : `<button class="btn btn-rhino" style="margin-top:14px" onclick="showPlans()">${es?'Ver planes / Mejorar':'View plans / Upgrade'}</button>`}
     </div>`;
 
   const dangerHtml = admin ? '' : `
     <div class="acct-card acct-danger">
       <div class="acct-plan-label" style="color:var(--red)">${es?'ZONA DE RIESGO':'DANGER ZONE'}</div>
       <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px">${es?'Cancelar tu suscripción cierra el acceso al panel. Descarga tus registros antes; los conservarás para tu contabilidad.':'Cancelling your subscription closes panel access. Download your records first; you will keep them for your accounting.'}</div>
-      <button class="btn btn-red acct-btn" onclick="confirmCancelSubscription()">${es?'Cancelar suscripción':'Cancel subscription'}</button>
+      <button class="btn btn-red acct-btn" onclick="${hasSub?'openBillingPortal()':'confirmCancelSubscription()'}">${es?'Cancelar suscripción':'Cancel subscription'}</button>
     </div>`;
 
   // Admin-only: grant plans to THIS company
@@ -2964,6 +2969,21 @@ async function discardPendingCompany(){
   }catch(e){ showToast('Error: '+e.message); }
 }
 
+// Abre el Portal de Cliente de Stripe (upgrade/downgrade/cancelar/tarjeta) para el usuario actual.
+const PORTAL_FN_URL='https://us-central1-sacha-llakta-viaticos.cloudfunctions.net/createPortalSession';
+async function openBillingPortal(){
+  const es=lang==='es';
+  if(!currentUser) return;
+  showToast(es?'Abriendo portal…':'Opening portal…');
+  try{
+    const token=await currentUser.getIdToken();
+    const r=await fetch(PORTAL_FN_URL,{method:'POST',headers:{'Authorization':'Bearer '+token}});
+    const data=await r.json().catch(()=>({}));
+    if(r.ok && data.url){ window.location.href=data.url; }
+    else { showToast((es?'No se pudo abrir el portal: ':'Could not open portal: ')+(data.error||r.status)); }
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
 function showPlans(){
   const es=lang==='es';
   const cur=currentPlan().id;
@@ -3274,6 +3294,7 @@ window.editAmount=editAmount;window.saveAmount=saveAmount;
 window.openLiveEmployees=openLiveEmployees;window.openLiveActiveTrips=openLiveActiveTrips;window.openLiveSpentToday=openLiveSpentToday;window.saveEmpNote=saveEmpNote;
 window.renderAdminTab=renderAdminTab;window.adminOnSearch=adminOnSearch;window.adminRefresh=adminRefresh;window.adminPlanMenu=adminPlanMenu;window.adminSetPlan=adminSetPlan;window.adminViewCompany=adminViewCompany;window.adminDeleteCompany=adminDeleteCompany;window.adminDoDeleteCompany=adminDoDeleteCompany;
 window.enterCompanyAsAdmin=enterCompanyAsAdmin;window.exitCompanyAsAdmin=exitCompanyAsAdmin;
+window.openBillingPortal=openBillingPortal;
 window.toggleCompanyOutOfTrip=toggleCompanyOutOfTrip;window.toggleEmployeeOutOfTrip=toggleEmployeeOutOfTrip;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
