@@ -848,6 +848,7 @@ function doLogout(){
   employees=[];allExpenses=[];trips=[];companyData=null;companyId=null;
   supervisorsList=[];
   myRole='owner';myName='';
+  impersonating=false; try{ hideAdminBanner(); }catch(e){}
   closeModal();
   // Defensa: si el botón de registro quedó en "Creando…", reinícialo al cerrar sesión.
   const rb=document.getElementById('btn-register');
@@ -1023,7 +1024,7 @@ function subscribeCompany(){
       companyData=cs.data();
       const hc=document.getElementById('hdr-company'); if(hc) hc.textContent=companyData.company||'';
       // Si estaba bloqueada y ahora tiene acceso (el pago activó el plan) → quitar candado.
-      if(wasLocked && hasChosenAccess()){
+      if(wasLocked && hasChosenAccess() && !impersonating){
         try{ closeModal(); }catch(e){}
         showToast(lang==='es'?'✓ ¡Plan activado! Bienvenido.':'✓ Plan activated! Welcome.');
       }
@@ -2521,6 +2522,9 @@ async function adminGrantPlan(kind){
 let adminCompanies=[];
 let adminLoaded=false;
 let adminFilter='';
+// Modo "actuar como empresa" (impersonation) para soporte total.
+let impersonating=false;
+let adminRealCid=null, adminRealData=null, adminRealRole=null, adminRealName=null;
 
 async function renderAdminTab(){
   const el=document.getElementById('admin-content');
@@ -2600,6 +2604,7 @@ function renderAdminList(){
         <div>${adminPlanTag(c.plan,c.vip)}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn btn-ghost btn-sm" style="color:#a78bfa" onclick="enterCompanyAsAdmin('${c.id}')">▶️ ${es?'Entrar':'Enter'}</button>
         <button class="btn btn-ghost btn-sm" onclick="adminPlanMenu('${c.id}')">💵 ${es?'Plan':'Plan'}</button>
         <button class="btn btn-ghost btn-sm" onclick="adminViewCompany('${c.id}')">👁 ${es?'Ver':'View'}</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="adminDeleteCompany('${c.id}')">🗑️ ${es?'Eliminar':'Delete'}</button>
@@ -2699,6 +2704,69 @@ async function adminDoDeleteCompany(cid){
     renderAdminList();
     showToast(es?'✓ Empresa eliminada':'✓ Company deleted');
   }catch(e){ showToast('Error: '+e.message); }
+}
+
+// ═══ ACTUAR COMO EMPRESA (impersonation para soporte) ═══
+function _adminUnsubAll(){
+  if(unsubEmployees){unsubEmployees();unsubEmployees=null;}
+  if(unsubExpenses){unsubExpenses();unsubExpenses=null;}
+  if(unsubTrips){unsubTrips();unsubTrips=null;}
+  if(unsubSupervisors){unsubSupervisors();unsubSupervisors=null;}
+  if(unsubCompany){unsubCompany();unsubCompany=null;}
+}
+function _adminResubAll(){
+  subscribeEmployees(); subscribeExpenses(); subscribeTrips(); subscribeCompany();
+  if(myRole==='owner') subscribeSupervisors();
+}
+function showAdminBanner(name){
+  const es=lang==='es';
+  let b=document.getElementById('admin-banner');
+  if(!b){
+    b=document.createElement('div'); b.id='admin-banner';
+    b.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:200;background:linear-gradient(90deg,#7c3aed,#a78bfa);color:#fff;padding:11px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13.5px;font-weight:600;box-shadow:0 -4px 20px rgba(0,0,0,.45)';
+    document.body.appendChild(b);
+  }
+  b.innerHTML=`<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">👁 ${es?'Administrando':'Managing'}: <b>${esc(name)}</b></span><button onclick="exitCompanyAsAdmin()" style="flex:none;background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.45);color:#fff;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;font-size:12.5px">${es?'✕ Salir':'✕ Exit'}</button>`;
+  b.style.display='flex';
+}
+function hideAdminBanner(){ const b=document.getElementById('admin-banner'); if(b) b.style.display='none'; }
+
+async function enterCompanyAsAdmin(cid){
+  const es=lang==='es';
+  if(!isAdminUser()) return;
+  try{
+    const cs=await FB.getDoc(FB.doc(FB.db,'companies',cid));
+    if(!cs.exists()){ showToast(es?'La empresa ya no existe.':'Company no longer exists.'); return; }
+    if(!impersonating){ adminRealCid=companyId; adminRealData=companyData; adminRealRole=myRole; adminRealName=myName; }
+    _adminUnsubAll();
+    impersonating=true;
+    companyId=cid; myRole='owner'; companyData=cs.data(); myName=companyData.supervisorName||'';
+    employees=[]; allExpenses=[]; trips=[]; supervisorsList=[];
+    document.getElementById('hdr-company').textContent=companyData.company||'';
+    document.getElementById('hdr-name').textContent=myName;
+    _adminResubAll();
+    closeModal();
+    showAdminBanner(companyData.company||cid);
+    switchTab('feed');
+    showToast(es?'👁 Entraste como administrador':'👁 Entered as admin');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+async function exitCompanyAsAdmin(){
+  const es=lang==='es';
+  if(!impersonating) return;
+  _adminUnsubAll();
+  companyId=adminRealCid; companyData=adminRealData; myRole=adminRealRole||'owner'; myName=adminRealName||'';
+  impersonating=false;
+  employees=[]; allExpenses=[]; trips=[]; supervisorsList=[];
+  try{ const cs=await FB.getDoc(FB.doc(FB.db,'companies',companyId)); if(cs.exists()) companyData=cs.data(); }catch(e){}
+  document.getElementById('hdr-company').textContent=(companyData&&companyData.company)||'';
+  document.getElementById('hdr-name').textContent=myName||((companyData&&companyData.supervisorName)||'');
+  _adminResubAll();
+  hideAdminBanner();
+  adminLoaded=false;
+  switchTab('admin');
+  showToast(es?'✓ Saliste del modo admin':'✓ Exited admin mode');
 }
 
 // ═══ INICIAR TRIAL DE 14 DÍAS ═══
@@ -3205,6 +3273,7 @@ window.editSupervisorPhone=editSupervisorPhone;window.saveSupervisorPhone=saveSu
 window.editAmount=editAmount;window.saveAmount=saveAmount;
 window.openLiveEmployees=openLiveEmployees;window.openLiveActiveTrips=openLiveActiveTrips;window.openLiveSpentToday=openLiveSpentToday;window.saveEmpNote=saveEmpNote;
 window.renderAdminTab=renderAdminTab;window.adminOnSearch=adminOnSearch;window.adminRefresh=adminRefresh;window.adminPlanMenu=adminPlanMenu;window.adminSetPlan=adminSetPlan;window.adminViewCompany=adminViewCompany;window.adminDeleteCompany=adminDeleteCompany;window.adminDoDeleteCompany=adminDoDeleteCompany;
+window.enterCompanyAsAdmin=enterCompanyAsAdmin;window.exitCompanyAsAdmin=exitCompanyAsAdmin;
 window.toggleCompanyOutOfTrip=toggleCompanyOutOfTrip;window.toggleEmployeeOutOfTrip=toggleEmployeeOutOfTrip;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
