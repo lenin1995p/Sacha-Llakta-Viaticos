@@ -348,6 +348,30 @@ textarea.input{resize:none;min-height:70px}
   </div>
 </div><!-- /gastos -->
 
+<!-- ══ SCREEN: TARJETA DE EMPRESA ══ -->
+<div class="screen" id="screen-card">
+  <div class="page" style="padding-top:16px">
+    <div class="section-header"><div class="card-title" data-i="tarjeta-titulo">Gastos con tarjeta de empresa</div></div>
+    <div style="font-size:12.5px;color:var(--dim);line-height:1.5;margin-bottom:14px" data-i="tarjeta-desc">Compras con la tarjeta de la empresa (consumibles, gasolina, etc.). No se descuenta de tus viáticos ni de tu saldo — solo se registra como gasto de la empresa.</div>
+    <div class="card" id="card-form">
+      <div class="field"><input class="input" id="card-name" placeholder="Nombre de la tarjeta (ej: Amex Empresa)" autocomplete="off"></div>
+      <div class="field"><input class="input" id="card-last4" type="text" inputmode="numeric" maxlength="4" placeholder="Últimos 4 dígitos" autocomplete="off"></div>
+      <div class="cat-grid" id="card-cat-chips"></div>
+      <div class="field"><input class="input" id="card-desc" placeholder="¿Qué compró? (opcional)" autocomplete="off"></div>
+      <div class="btn-row" style="align-items:center">
+        <div class="input-prefix" style="flex:1"><span class="pfx">$</span><input class="input" id="card-monto" type="number" min="0.01" step="0.01" placeholder="0.00" inputmode="decimal"></div>
+        <button class="btn btn-ghost btn-sm" id="card-receipt-btn" onclick="triggerCardReceipt()" style="font-size:18px;padding:9px 12px;position:relative">📷
+          <div id="card-receipt-mini" style="display:none;position:absolute;top:-6px;right:-4px;width:16px;height:16px;background:var(--green);border-radius:50%;font-size:9px;align-items:center;justify-content:center;color:#000;font-weight:800">✓</div>
+        </button>
+        <input type="file" accept="image/*" capture="environment" id="card-receipt-input" class="photo-input" onchange="handleCardReceipt(event)">
+        <button class="btn btn-rhino btn-sm" onclick="addCardExpense()">Agregar</button>
+      </div>
+      <div id="card-err" style="font-size:12px;color:var(--red);margin-top:6px;display:none"></div>
+    </div>
+    <div id="card-list" style="margin-top:6px"></div>
+  </div>
+</div>
+
 <!-- ══ SCREEN: ESTADÍSTICAS ══ -->
 <div class="screen" id="screen-stats">
   <div class="page" style="padding-top:16px">
@@ -362,6 +386,7 @@ textarea.input{resize:none;min-height:70px}
     <div class="section-header">
       <div class="card-title" data-i="historial">Historial de Viajes</div>
     </div>
+    <button class="btn btn-ghost" onclick="recoverFromCloud()" style="width:100%;margin-bottom:14px" data-i="recuperar-nube">☁️ Recuperar de la nube</button>
     <div id="history-list"></div>
   </div>
 </div>
@@ -495,6 +520,9 @@ textarea.input{resize:none;min-height:70px}
 <nav class="bottom-nav">
   <button class="nav-item active" onclick="switchScreen('gastos')" id="nav-gastos">
     <span class="nav-icon">💼</span><span data-i="nav-gastos">Gastos</span>
+  </button>
+  <button class="nav-item" onclick="switchScreen('card')" id="nav-card">
+    <span class="nav-icon">💳</span><span data-i="nav-tarjeta">Tarjeta</span>
   </button>
   <button class="nav-item" onclick="switchScreen('stats')" id="nav-stats">
     <span class="nav-icon">📊</span><span data-i="nav-stats">Stats</span>
@@ -886,6 +914,78 @@ function restoreTripExpensesFromCloud(tripId){
       },(err)=>{ console.warn('restore trip expenses failed',err); try{unsub();}catch(e){} resolve(null); });
     }catch(e){ console.warn('restoreTripExpensesFromCloud',e); resolve(null); }
   });
+}
+
+// Lectura puntual de una consulta (una sola vez), usando onSnapshot (no hay getDocs).
+function readOnce(q){
+  return new Promise((resolve)=>{
+    try{
+      let done=false;
+      const unsub=FB.onSnapshot(q,(snap)=>{
+        if(done)return; done=true;
+        const arr=[]; snap.forEach(d=>arr.push({id:d.id,data:d.data()}));
+        try{unsub();}catch(e){} resolve(arr);
+      },(err)=>{ console.warn('readOnce',err); resolve([]); });
+    }catch(e){ resolve([]); }
+  });
+}
+
+// Recupera TODO desde la nube: viajes anteriores (historial + PDFs), viaje activo,
+// gastos fuera de viaje y el saldo personal. Funciona con todos los viajes anteriores.
+async function recoverFromCloud(){
+  const es=lang==='es';
+  if(!S.linked || !S.companyId || !S.employeeId){ toast(es?'Debes estar vinculado a una empresa.':'You must be linked to a company.'); return; }
+  toast(es?'Recuperando de la nube…':'Recovering from cloud…');
+  try{
+    const empSnap=await FB.getDoc(FB.doc(FB.db,'companies',S.companyId,'employees',S.employeeId));
+    const ed=empSnap.exists()?empSnap.data():{};
+    const allExp=await readOnce(FB.query(FB.collection(FB.db,'companies',S.companyId,'expenses'),FB.where('employeeId','==',S.employeeId)));
+    const allTrips=await readOnce(FB.query(FB.collection(FB.db,'companies',S.companyId,'trips'),FB.where('employeeId','==',S.employeeId)));
+
+    const fmtTs=(t)=>(t&&t.toDate)?t.toDate().toLocaleString(lang==='es'?'es-US':'en-US',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+    const fmtShort=(t)=>(t&&t.toDate)?t.toDate().toLocaleString(lang==='es'?'es-US':'en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+    const norm=(x,id)=>({ id:x.localId||(Date.now()+Math.floor(Math.random()*100000)), desc:x.desc||'', monto:x.monto||0, cat:x.cat||'otro', receipt:x.receipt||null, outOfTrip:!!x.outOfTrip, tripId:x.tripId||null, fecha:fmtShort(x.createdAt), cloudId:id });
+    const exps=allExp.map(e=>norm(e.data,e.id));
+
+    const byTrip={}; const outG=[];
+    exps.forEach(g=>{ if(g.tripId){ (byTrip[g.tripId]=byTrip[g.tripId]||[]).push(g); } else if(g.outOfTrip){ outG.push(g); } });
+
+    const activeTripId=(ed.tripActive && ed.currentTripId)?ed.currentTripId:null;
+    const history=[];
+    allTrips.forEach(t=>{
+      const td=t.data; const tid=td.tripId||t.id;
+      if(tid===activeTripId) return;
+      const gastos=(byTrip[tid]||[]).slice().sort((a,b)=>(b.id||0)-(a.id||0));
+      const spent=gastos.reduce((s,x)=>s+(x.monto||0),0);
+      const initial=(typeof td.assignedAmount==='number')?td.assignedAmount:0;
+      history.push({
+        id:Date.now()+Math.floor(Math.random()*100000),
+        company:S.company||td.company||'', employee:S.employee||td.employeeName||'',
+        tripStart:fmtTs(td.startedAt), tripEnd:fmtTs(td.endedAt), tripId:tid,
+        initialBalance:Math.round(initial*100)/100,
+        totalSpent:Math.round(spent*100)/100,
+        balance:Math.round((initial-spent)*100)/100,
+        gastos, categories:[...S.categories]
+      });
+    });
+    history.sort((a,b)=>(b.id||0)-(a.id||0));
+    S.history=history;
+
+    if(activeTripId){
+      S.tripActive=true; S.currentTripId=activeTripId;
+      S.gastos=(byTrip[activeTripId]||[]).slice().sort((a,b)=>(b.id||0)-(a.id||0));
+      const at=allTrips.find(t=>(t.data.tripId||t.id)===activeTripId);
+      S.initialBalance=(at&&typeof at.data.assignedAmount==='number')?at.data.assignedAmount:(ed.assignedAmount||S.initialBalance||0);
+    } else { S.tripActive=false; S.gastos=[]; }
+
+    S.outGastos=outG.sort((a,b)=>(b.id||0)-(a.id||0));
+    if(typeof ed.walletBalance==='number') S.wallet=Math.round(ed.walletBalance*100)/100;
+    if(typeof ed.assignedAmount==='number') S.lastAssigned=ed.assignedAmount;
+    if(typeof ed.outOfTripAllowed==='boolean') S.outOfTripAllowed=ed.outOfTripAllowed;
+
+    save(); render(); if(typeof renderHistory==='function') renderHistory();
+    toast(es?('✓ Recuperado: '+history.length+' viaje(s) y tu saldo'):('✓ Recovered: '+history.length+' trip(s) and your balance'));
+  }catch(e){ toast('Error: '+e.message); }
 }
 
 // Close the trip metadata doc when a trip ends.
@@ -1392,6 +1492,93 @@ function saveSetupAndContinue(){
 // SCREENS
 // ════════════════════════════════════════
 let currentScreen='gastos';
+// ═══ TARJETA DE EMPRESA (gasto que NO descuenta; solo se registra en la nube) ═══
+let cardReceiptB64=null;
+let activeCardCat=null;
+let cardExpensesCache=[];
+function triggerCardReceipt(){ const i=document.getElementById('card-receipt-input'); if(i) i.click(); }
+function handleCardReceipt(event){
+  const f=event.target.files&&event.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=(e)=>{ cardReceiptB64=e.target.result; const m=document.getElementById('card-receipt-mini'); if(m) m.style.display='flex'; };
+  r.readAsDataURL(f);
+}
+function renderCardCatChips(){
+  const el=document.getElementById('card-cat-chips'); if(!el) return;
+  el.innerHTML='';
+  S.categories.forEach(c=>{
+    const btn=document.createElement('button'); btn.className='cat-chip';
+    const active=activeCardCat===c.id;
+    btn.style.background=active?c.color+'22':'transparent';
+    btn.style.borderColor=active?c.color:'var(--border)';
+    btn.style.color=active?c.color:'var(--dim)';
+    btn.innerHTML=c.emoji+' <span>'+catName(c)+'</span>';
+    btn.onclick=()=>{activeCardCat=c.id;renderCardCatChips();};
+    el.appendChild(btn);
+  });
+}
+function currentMonthKey(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function renderCardScreen(){ renderCardCatChips(); loadCardExpenses(); }
+
+async function addCardExpense(){
+  const es=lang==='es';
+  const err=document.getElementById('card-err');
+  const showErr=(m)=>{ if(err){err.textContent=m;err.style.display='block';setTimeout(()=>err.style.display='none',3500);} };
+  if(!S.linked||!S.companyId||!S.employeeId){ showErr(es?'Debes estar vinculado a una empresa.':'You must be linked.'); return; }
+  const cardName=(document.getElementById('card-name').value||'').trim();
+  const last4=(document.getElementById('card-last4').value||'').trim();
+  const desc=(document.getElementById('card-desc').value||'').trim();
+  const monto=parseFloat(document.getElementById('card-monto').value);
+  if(!cardName){ showErr(es?'Escribe el nombre de la tarjeta.':'Enter the card name.'); return; }
+  if(isNaN(monto)||monto<=0){ showErr(es?'Monto inválido.':'Invalid amount.'); return; }
+  const cat=S.categories.find(c=>c.id===activeCardCat)||{id:'otro',name:'Otro',emoji:'📦',color:'#64748b'};
+  let receipt=cardReceiptB64||null;
+  try{
+    if(receipt) receipt=await compressImage(receipt);
+    await FB.addDoc(FB.collection(FB.db,'companies',S.companyId,'cardExpenses'),{
+      employeeId:S.employeeId, employeeName:S.employee, employeeCode:S.employeeCode||'',
+      cardName, cardLast4:last4, monto:Math.round(monto*100)/100,
+      cat:cat.id, catName:cat.name, catEmoji:cat.emoji, catColor:cat.color,
+      desc, receipt:receipt||null, month:currentMonthKey(), createdAt:FB.serverTimestamp()
+    });
+    document.getElementById('card-desc').value=''; document.getElementById('card-monto').value='';
+    cardReceiptB64=null; activeCardCat=null;
+    const m=document.getElementById('card-receipt-mini'); if(m) m.style.display='none';
+    renderCardCatChips();
+    toast(es?'✓ Gasto de tarjeta registrado':'✓ Card expense saved');
+    loadCardExpenses();
+  }catch(e){ showErr('Error: '+e.message); }
+}
+
+async function loadCardExpenses(){
+  const el=document.getElementById('card-list'); if(!el) return;
+  const es=lang==='es';
+  if(!S.linked||!S.companyId||!S.employeeId){ el.innerHTML=''; return; }
+  el.innerHTML=`<div style="text-align:center;color:var(--muted);padding:18px 0">${es?'Cargando…':'Loading…'}</div>`;
+  const mk=currentMonthKey();
+  const rows=await readOnce(FB.query(FB.collection(FB.db,'companies',S.companyId,'cardExpenses'),FB.where('employeeId','==',S.employeeId)));
+  const items=rows.map(r=>Object.assign({_id:r.id},r.data)).filter(x=>x.month===mk);
+  cardExpensesCache=items;
+  items.sort((a,b)=>{ const ta=(a.createdAt&&a.createdAt.toDate)?a.createdAt.toDate().getTime():0; const tb=(b.createdAt&&b.createdAt.toDate)?b.createdAt.toDate().getTime():0; return tb-ta; });
+  const total=items.reduce((s,x)=>s+(x.monto||0),0);
+  if(!items.length){ el.innerHTML=`<div style="text-align:center;color:var(--muted);padding:22px 0">${es?'Sin gastos de tarjeta este mes.':'No card expenses this month.'}</div>`; return; }
+  let html=`<div class="section-header" style="margin-top:8px"><div class="section-title">${items.length} ${es?'este mes':'this month'}</div><div style="font-weight:800;color:var(--rhino)">$${total.toFixed(2)}</div></div>`;
+  items.forEach(x=>{
+    html+=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;gap:10px">
+        <div style="min-width:0"><div style="font-weight:700;font-size:14px">${x.catEmoji||'📦'} ${esc(x.desc||x.catName||'')}</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:2px">💳 ${esc(x.cardName||'')}${x.cardLast4?' ····'+esc(x.cardLast4):''}</div></div>
+        <div style="text-align:right"><div style="font-weight:800;color:var(--rhino)">$${(x.monto||0).toFixed(2)}</div>
+          ${x.receipt?`<button class="exp-act-btn" onclick="viewCardReceipt('${x._id}')" style="margin-top:4px">📷</button>`:''}</div>
+      </div></div>`;
+  });
+  el.innerHTML=html;
+}
+function viewCardReceipt(id){
+  const x=cardExpensesCache.find(c=>c._id===id); if(!x||!x.receipt) return;
+  showSheet(`<div style="text-align:center"><div style="font-size:20px;font-weight:800;margin-bottom:12px">📷 ${lang==='es'?'Recibo':'Receipt'}</div><img src="${x.receipt}" style="max-width:100%;border-radius:10px;border:1px solid var(--border)"><div style="margin-top:14px"><button class="btn btn-ghost" onclick="closeModal()">${t('cancelar')}</button></div></div>`);
+}
+
 function switchScreen(name){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
@@ -1401,6 +1588,7 @@ function switchScreen(name){
   if(name==='stats') renderStats();
   if(name==='history') renderHistory();
   if(name==='config') renderConfig();
+  if(name==='card') renderCardScreen();
 }
 
 function switchCfgTab(tab){

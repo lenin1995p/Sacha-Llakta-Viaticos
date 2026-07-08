@@ -1327,6 +1327,7 @@ function renderEmployees(){
       <div class="emp-actions" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="toggleEmployeeOutOfTrip('${emp.id}')">${outAllowed?'👛':'🔒'} ${lang==='es'?'Fuera de viaje':'Out-of-trip'}: <b style="color:${outAllowed?'var(--green)':'var(--muted)'}">${outAllowed?(lang==='es'?'Permitido':'Allowed'):(lang==='es'?'Bloqueado':'Blocked')}</b></button>
         <button class="btn btn-ghost btn-sm" onclick="supAdjustWallet('${emp.id}')">✏️ ${lang==='es'?'Ajustar saldo':'Adjust balance'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="supViewCardExpenses('${emp.id}')">💳 ${lang==='es'?'Tarjeta empresa':'Company card'}</button>
       </div>
       <div class="emp-actions" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="confirmRegenCode('${emp.id}','${esc(emp.name)}')">🔄 ${lang==='es'?'Nuevo código':'New code'}</button>
@@ -2483,6 +2484,66 @@ async function doSupAdjustWallet(id){
   }catch(e){ showToast('Error: '+e.message); }
 }
 
+// ═══ GASTOS CON TARJETA DE EMPRESA (ver por empleado + cerrar mes) ═══
+async function supViewCardExpenses(id){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===id); if(!emp) return;
+  showModal(`<div class="loading"><div class="spinner"></div>${es?'Cargando…':'Loading…'}</div>`);
+  try{
+    const qs=await FB.getDocs(FB.query(FB.collection(FB.db,'companies',companyId,'cardExpenses'),FB.where('employeeId','==',id)));
+    const items=qs.docs.map(d=>Object.assign({_id:d.id},d.data()));
+    const byMonth={};
+    items.forEach(x=>{ const m=x.month||'—'; (byMonth[m]=byMonth[m]||[]).push(x); });
+    const months=Object.keys(byMonth).sort().reverse();
+    let body=`<div style="display:flex;align-items:center;margin-bottom:4px"><button class="btn btn-ghost btn-sm" onclick="closeModal()" style="padding:6px 12px">← ${es?'Volver':'Back'}</button></div>
+      <div class="modal-title" style="margin-top:8px">💳 ${es?'Gastos de tarjeta':'Company card'}</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">${esc(emp.name||'')}</div>`;
+    if(!months.length){ body+=`<div style="text-align:center;color:var(--muted);padding:22px 0">${es?'Sin gastos de tarjeta.':'No card expenses.'}</div>`; }
+    else {
+      body+=`<div style="max-height:60vh;overflow-y:auto">`;
+      months.forEach(m=>{
+        const list=byMonth[m].sort((a,b)=>{const ta=(a.createdAt&&a.createdAt.toDate)?a.createdAt.toDate().getTime():0;const tb=(b.createdAt&&b.createdAt.toDate)?b.createdAt.toDate().getTime():0;return tb-ta;});
+        const total=list.reduce((s,x)=>s+(x.monto||0),0);
+        body+=`<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-weight:800;font-size:15px">${m}</div><div style="font-weight:800;color:var(--rhino)">$${total.toFixed(2)}</div></div>`;
+        list.forEach(x=>{
+          body+=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px">
+            <div style="display:flex;justify-content:space-between;gap:8px"><b>${x.catEmoji||'📦'} ${esc(x.desc||x.catName||'')}</b><b style="color:var(--rhino)">$${(x.monto||0).toFixed(2)}</b></div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:2px">💳 ${esc(x.cardName||'')}${x.cardLast4?' ····'+esc(x.cardLast4):''}${x.receipt?' · 📷':''}</div></div>`;
+        });
+        body+=`<button class="btn btn-ghost btn-sm" style="width:100%;color:var(--rhino)" onclick="closeCardMonth('${id}','${m}')">📥 ${es?'Descargar y cerrar mes':'Download & close month'}</button></div>`;
+      });
+      body+=`</div>`;
+    }
+    showModal(body, true);
+  }catch(e){ showModal(`<div style="padding:20px;color:var(--red)">Error: ${esc(e.message)}</div><button class="btn btn-ghost" style="width:100%" onclick="closeModal()">OK</button>`); }
+}
+
+async function closeCardMonth(id, month){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===id);
+  if(!confirm(es?('¿Descargar y BORRAR los gastos de tarjeta de '+month+'? Se descarga el CSV y luego se eliminan de la nube.'):('Download and DELETE card expenses for '+month+'? The CSV downloads, then they are removed from the cloud.'))) return;
+  try{
+    const qs=await FB.getDocs(FB.query(FB.collection(FB.db,'companies',companyId,'cardExpenses'),FB.where('employeeId','==',id)));
+    const items=qs.docs.map(d=>({ref:d.ref,data:d.data()})).filter(x=>((x.data.month)||'')===month);
+    if(!items.length){ showToast(es?'Nada que cerrar.':'Nothing to close.'); return; }
+    const rows=[['Fecha','Empleado','Tarjeta','Ultimos4','Categoria','Descripcion','Monto']];
+    items.forEach(({data:x})=>{
+      const d=(x.createdAt&&x.createdAt.toDate)?x.createdAt.toDate().toISOString().slice(0,10):'';
+      rows.push([d, x.employeeName||'', x.cardName||'', x.cardLast4||'', x.catName||'', String(x.desc||'').replace(/"/g,"'"), (x.monto||0).toFixed(2)]);
+    });
+    const total=items.reduce((s,x)=>s+(x.data.monto||0),0);
+    rows.push(['','','','','','TOTAL', total.toFixed(2)]);
+    const csv=rows.map(r=>r.map(c=>'"'+String(c)+'"').join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='tarjeta_'+((emp&&emp.name)?emp.name.replace(/\s+/g,'_'):id)+'_'+month+'.csv'; a.click();
+    for(const it of items){ try{ await FB.deleteDoc(it.ref); }catch(e){} }
+    closeModal();
+    showToast(es?'✓ Mes descargado y cerrado':'✓ Month downloaded and closed');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
 // ═══ EDIT SUPERVISOR PHONE ═══
 function editSupervisorPhone(){
   const es=lang==='es';
@@ -3349,6 +3410,7 @@ window.renderAdminTab=renderAdminTab;window.adminOnSearch=adminOnSearch;window.a
 window.enterCompanyAsAdmin=enterCompanyAsAdmin;window.exitCompanyAsAdmin=exitCompanyAsAdmin;
 window.openBillingPortal=openBillingPortal;
 window.supAdjustWallet=supAdjustWallet;window.doSupAdjustWallet=doSupAdjustWallet;
+window.supViewCardExpenses=supViewCardExpenses;window.closeCardMonth=closeCardMonth;
 window.toggleCompanyOutOfTrip=toggleCompanyOutOfTrip;window.toggleEmployeeOutOfTrip=toggleEmployeeOutOfTrip;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
