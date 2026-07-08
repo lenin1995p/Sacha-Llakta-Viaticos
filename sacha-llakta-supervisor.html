@@ -1280,6 +1280,12 @@ function renderEmployees(){
            ${outTotal>0?`<div style="margin-top:5px;color:var(--muted)">${lang==='es'?'Gastos fuera de viaje':'Out-of-trip spend'}: <b style="color:var(--red)">-$${outTotal.toFixed(2)}</b> (${outExpenses.length})</div>`:''}
          </div>`
       : '';
+    // Nota del último ajuste de saldo (auditoría — quién, de cuánto a cuánto y por qué).
+    const adj=emp.lastWalletAdjustment;
+    const walletAdjNote = adj ? `<div style="background:rgba(227,169,74,.08);border:1px solid rgba(227,169,74,.25);border-radius:10px;padding:9px 12px;margin-top:8px;font-size:12px;color:var(--text);line-height:1.5">
+        ✏️ ${lang==='es'?'Último ajuste de saldo':'Last balance adjustment'} · <span style="color:var(--muted)">${adj.by==='employee'?(lang==='es'?'por el empleado':'by the employee'):(lang==='es'?'por el supervisor':'by the supervisor')}</span><br>
+        <b>$${(adj.old||0).toFixed(2)} → $${(adj.new||0).toFixed(2)}</b> · <span style="color:var(--muted)">"${esc(adj.reason||'')}"</span>
+      </div>` : '';
     return `<div class="emp-card">
       <div class="emp-card-head">
         <div>
@@ -1307,6 +1313,7 @@ function renderEmployees(){
         </div>
       </div>
       ${nextTripHint}
+      ${walletAdjNote}
       <div class="emp-actions">
         <button class="btn btn-ghost btn-sm" onclick="editAmount('${emp.id}')">💵 ${lang==='es'?'Editar viáticos':'Edit per-diem'}</button>
         ${emp.tripActive
@@ -1319,6 +1326,7 @@ function renderEmployees(){
       </div>
       <div class="emp-actions" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="toggleEmployeeOutOfTrip('${emp.id}')">${outAllowed?'👛':'🔒'} ${lang==='es'?'Fuera de viaje':'Out-of-trip'}: <b style="color:${outAllowed?'var(--green)':'var(--muted)'}">${outAllowed?(lang==='es'?'Permitido':'Allowed'):(lang==='es'?'Bloqueado':'Blocked')}</b></button>
+        <button class="btn btn-ghost btn-sm" onclick="supAdjustWallet('${emp.id}')">✏️ ${lang==='es'?'Ajustar saldo':'Adjust balance'}</button>
       </div>
       <div class="emp-actions" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="confirmRegenCode('${emp.id}','${esc(emp.name)}')">🔄 ${lang==='es'?'Nuevo código':'New code'}</button>
@@ -2430,6 +2438,51 @@ async function toggleEmployeeOutOfTrip(id){
   }catch(e){ showToast('Error: '+e.message); }
 }
 
+// Ajustar el saldo personal (billetera) de un empleado. Envía un comando a su app
+// y registra la auditoría (quién, de cuánto a cuánto, y por qué).
+function supAdjustWallet(id){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===id); if(!emp) return;
+  const cur=(typeof emp.walletBalance==='number'?emp.walletBalance:0).toFixed(2);
+  showModal(`
+    <div class="modal-title">✏️ ${es?'Ajustar saldo personal':'Adjust personal balance'}</div>
+    <div style="font-size:13px;color:var(--text);margin:6px 0 2px;font-weight:700">${esc(emp.name||'')}</div>
+    <div style="font-size:12.5px;color:var(--dim);margin-bottom:14px">${es?'Saldo actual':'Current balance'}: <b style="color:var(--green)">$${cur}</b></div>
+    <div class="field"><div class="field-label">${es?'Nuevo saldo (USD)':'New balance (USD)'}</div>
+      <div class="input-prefix"><span class="pfx">$</span><input class="input" id="sup-adj-val" type="number" min="0" step="0.01" value="${cur}" inputmode="decimal"></div></div>
+    <div class="field"><div class="field-label">${es?'Motivo (opcional)':'Reason (optional)'}</div>
+      <textarea class="input" id="sup-adj-note" rows="2" style="resize:vertical" placeholder="${es?'Ej: Corrección administrativa':'E.g: Administrative correction'}"></textarea></div>
+    <div id="sup-adj-err" style="font-size:12px;color:var(--red);margin-top:6px;display:none"></div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-rhino" onclick="doSupAdjustWallet('${id}')">${es?'Guardar':'Save'}</button>
+    </div>
+    <div style="font-size:11.5px;color:var(--dim);margin-top:10px;line-height:1.5">${es?'El nuevo saldo se aplica en la app del empleado cuando se conecte.':'The new balance applies in the employee app once it connects.'}</div>`);
+}
+async function doSupAdjustWallet(id){
+  const es=lang==='es';
+  const emp=employees.find(e=>e.id===id); if(!emp) return;
+  const vEl=document.getElementById('sup-adj-val');
+  const nEl=document.getElementById('sup-adj-note');
+  const err=document.getElementById('sup-adj-err');
+  const v=parseFloat(vEl?vEl.value:'');
+  const note=(nEl?nEl.value:'').trim();
+  if(isNaN(v)||v<0){ if(err){err.textContent=es?'Ingresa un saldo válido.':'Enter a valid balance.';err.style.display='block';} return; }
+  const val=Math.round(v*100)/100;
+  const oldVal=Math.round((typeof emp.walletBalance==='number'?emp.walletBalance:0)*100)/100;
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
+      walletBalance: val,
+      supervisorCommand: { type:'setWallet', amount:val, ts:Date.now() },
+      lastWalletAdjustment:{ by:'supervisor', old:oldVal, new:val, reason:note||(es?'Ajuste del supervisor':'Supervisor adjustment'), at:FB.serverTimestamp() }
+    });
+    emp.walletBalance=val;
+    closeModal();
+    showToast(es?'✓ Saldo ajustado':'✓ Balance adjusted');
+    renderEmployees();
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
 // ═══ EDIT SUPERVISOR PHONE ═══
 function editSupervisorPhone(){
   const es=lang==='es';
@@ -3295,6 +3348,7 @@ window.openLiveEmployees=openLiveEmployees;window.openLiveActiveTrips=openLiveAc
 window.renderAdminTab=renderAdminTab;window.adminOnSearch=adminOnSearch;window.adminRefresh=adminRefresh;window.adminPlanMenu=adminPlanMenu;window.adminSetPlan=adminSetPlan;window.adminViewCompany=adminViewCompany;window.adminDeleteCompany=adminDeleteCompany;window.adminDoDeleteCompany=adminDoDeleteCompany;
 window.enterCompanyAsAdmin=enterCompanyAsAdmin;window.exitCompanyAsAdmin=exitCompanyAsAdmin;
 window.openBillingPortal=openBillingPortal;
+window.supAdjustWallet=supAdjustWallet;window.doSupAdjustWallet=doSupAdjustWallet;
 window.toggleCompanyOutOfTrip=toggleCompanyOutOfTrip;window.toggleEmployeeOutOfTrip=toggleEmployeeOutOfTrip;
 window.supervisorStartTrip=supervisorStartTrip;window.confirmSupervisorStart=confirmSupervisorStart;
 window.supervisorEndTrip=supervisorEndTrip;window.confirmSupervisorEnd=confirmSupervisorEnd;
