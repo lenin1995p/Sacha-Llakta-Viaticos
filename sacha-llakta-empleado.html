@@ -328,7 +328,7 @@ textarea.input{resize:none;min-height:70px}
         <div style="position:relative;flex-shrink:0">
           <button class="btn btn-ghost btn-sm" id="receipt-btn" onclick="triggerReceiptPhoto()" title="Adjuntar recibo" style="font-size:18px;padding:9px 12px">📷</button>
           <input type="file" accept="image/*" capture="environment" id="receipt-input" class="photo-input" onchange="handleReceiptPhoto(event)">
-          <div id="receipt-preview-mini" style="display:none;position:absolute;top:-6px;right:-4px;width:16px;height:16px;background:var(--green);border-radius:50%;font-size:9px;display:flex;align-items:center;justify-content:center;color:#000;font-weight:800">✓</div>
+          <div id="receipt-preview-mini" style="display:none;position:absolute;top:-6px;right:-4px;width:16px;height:16px;background:var(--green);border-radius:50%;font-size:9px;align-items:center;justify-content:center;color:#000;font-weight:800">✓</div>
         </div>
         <button class="btn btn-rhino btn-sm" onclick="addGasto()" data-i="agregar">Agregar</button>
       </div>
@@ -1903,14 +1903,15 @@ function showStartTripModal(){
       <div style="font-size:11px;letter-spacing:.5px;color:var(--dim);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lang==='es'?'Presupuesto de este viaje':'Budget for this trip'}</div>
       <div class="input-prefix">
         <span class="pfx">$</span>
-        <input class="input" id="start-amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="${(S.lastAssigned||0).toFixed(2)}" autocomplete="off">
+        <input class="input" id="start-amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="${(S.lastAssigned||0).toFixed(2)}" autocomplete="off" oninput="updateStartBreakdown()">
       </div>
     </div>
     ${(S.wallet||0)>0?`
     <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-top:12px;font-size:13px;color:var(--text);line-height:1.4">
-      <input type="checkbox" id="start-add-wallet" style="margin-top:2px;width:17px;height:17px;accent-color:var(--green)">
+      <input type="checkbox" id="start-add-wallet" style="margin-top:2px;width:17px;height:17px;accent-color:var(--green)" onchange="updateStartBreakdown()">
       <span>${lang==='es'?'Sumar mi saldo personal':'Add my personal balance'} <b style="color:var(--green)">$${(S.wallet||0).toFixed(2)}</b></span>
     </label>`:''}
+    <div id="start-breakdown" style="margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px"></div>
     <div id="start-err" style="font-size:12px;color:var(--red);margin-top:8px;display:none"></div>
     <ul class="modal-checklist" style="margin-top:12px">
       <li><span>🔒</span>${lang==='es'?'La configuración quedará bloqueada':'Settings will be locked'}</li>
@@ -1922,6 +1923,27 @@ function showStartTripModal(){
       <button class="btn btn-green" onclick="confirmStartTrip()">${lang==='es'?'¡Iniciar!':'Start!'}</button>
     </div>`;
   showSheet(content);
+  updateStartBreakdown();
+}
+
+// Muestra el desglose en vivo: saldo anterior + presupuesto = total disponible al iniciar.
+function updateStartBreakdown(){
+  const el=document.getElementById('start-breakdown'); if(!el) return;
+  const es=lang==='es';
+  const inp=document.getElementById('start-amount');
+  let base=parseFloat(inp?inp.value:0); if(isNaN(base)||base<0) base=0;
+  const chk=document.getElementById('start-add-wallet');
+  const wallet=Math.round((S.wallet||0)*100)/100;
+  const addWallet=(chk&&chk.checked)?wallet:0;
+  const total=Math.round((base+addWallet)*100)/100;
+  let rows='';
+  if(wallet>0){
+    rows+=`<div style="display:flex;justify-content:space-between;color:var(--muted)"><span>${es?'Saldo personal anterior':'Previous personal balance'}</span><span>$${wallet.toFixed(2)}</span></div>`;
+    rows+=`<div style="display:flex;justify-content:space-between;color:var(--muted);margin-top:4px"><span>${es?'Se suma a este viaje':'Added to this trip'}</span><span>${addWallet>0?('+$'+addWallet.toFixed(2)):'—'}</span></div>`;
+  }
+  rows+=`<div style="display:flex;justify-content:space-between;color:var(--muted);margin-top:4px"><span>${es?'Presupuesto del viaje':'Trip budget'}</span><span>$${base.toFixed(2)}</span></div>`;
+  rows+=`<div style="display:flex;justify-content:space-between;font-weight:800;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><span>${es?'Total disponible al iniciar':'Total available at start'}</span><span style="color:var(--green)">$${total.toFixed(2)}</span></div>`;
+  el.innerHTML=rows;
 }
 
 // Read the editable budget (and optional personal-balance roll-in), then start the trip.
