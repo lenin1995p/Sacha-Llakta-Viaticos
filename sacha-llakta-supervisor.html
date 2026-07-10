@@ -102,6 +102,8 @@ body{padding-bottom:80px}
 .emp-stat{font-size:12px;color:var(--muted)}
 .emp-stat b{color:var(--text);font-weight:800}
 .emp-actions{display:flex;gap:7px;margin-top:12px}
+.emp-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.emp-action-grid .btn{width:100%;min-height:44px;justify-content:center;text-align:center;line-height:1.25}
 
 .badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
 .badge-green{background:#064e3b33;color:var(--green);border:1px solid #064e3b}
@@ -201,7 +203,7 @@ body{padding-bottom:80px}
 </style>
 </head>
 <body>
-<input type="file" id="supervisor-receipt-input" accept="image/*" capture="environment" style="display:none" onchange="handleReceiptFileSelected(this)">
+<input type="file" id="supervisor-receipt-input" accept="image/*" style="display:none" onchange="handleReceiptFileSelected(this)">
 
 
 <!-- ════ LOGIN SCREEN ════ -->
@@ -1320,18 +1322,16 @@ function renderEmployees(){
           ? `<button class="btn btn-ghost btn-sm" style="color:var(--amber,#f59e0b)" onclick="supervisorEndTrip('${emp.id}','${esc(emp.name)}')">${lang==='es'?'Finalizar viaje':'End trip'}</button>`
           : `<button class="btn btn-ghost btn-sm" style="color:var(--green)" onclick="supervisorStartTrip('${emp.id}','${esc(emp.name)}')">${lang==='es'?'Iniciar viaje':'Start trip'}</button>`}
       </div>
-      <div class="emp-actions" style="margin-top:8px">
-        <button class="btn btn-ghost btn-sm" onclick="copyCode('${esc(emp.code)}')">📋 ${lang==='es'?'Compartir':'Share'}</button>
-        <button class="btn btn-ghost btn-sm" onclick="viewEmployeeInfo('${emp.id}')">👤 ${lang==='es'?'Info':'Info'}</button>
-      </div>
-      <div class="emp-actions" style="margin-top:8px">
-        <button class="btn btn-ghost btn-sm" onclick="toggleEmployeeOutOfTrip('${emp.id}')">${outAllowed?'👛':'🔒'} ${lang==='es'?'Fuera de viaje':'Out-of-trip'}: <b style="color:${outAllowed?'var(--green)':'var(--muted)'}">${outAllowed?(lang==='es'?'Permitido':'Allowed'):(lang==='es'?'Bloqueado':'Blocked')}</b></button>
+      <div class="emp-action-grid">
+        <button class="btn btn-ghost btn-sm" onclick="toggleEmployeeOutOfTrip('${emp.id}')">${outAllowed?'👛':'🔒'} ${lang==='es'?'Fuera de viaje':'Out-of-trip'}<br><b style="color:${outAllowed?'var(--green)':'var(--muted)'};font-size:11px">${outAllowed?(lang==='es'?'Permitido':'Allowed'):(lang==='es'?'Bloqueado':'Blocked')}</b></button>
         <button class="btn btn-ghost btn-sm" onclick="supAdjustWallet('${emp.id}')">✏️ ${lang==='es'?'Ajustar saldo':'Adjust balance'}</button>
         <button class="btn btn-ghost btn-sm" onclick="supViewCardExpenses('${emp.id}')">💳 ${lang==='es'?'Tarjeta empresa':'Company card'}</button>
-      </div>
-      <div class="emp-actions" style="margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="viewEmployeeInfo('${emp.id}')">👤 ${lang==='es'?'Info':'Info'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="copyCode('${esc(emp.code)}')">📋 ${lang==='es'?'Compartir':'Share'}</button>
         <button class="btn btn-ghost btn-sm" onclick="confirmRegenCode('${emp.id}','${esc(emp.name)}')">🔄 ${lang==='es'?'Nuevo código':'New code'}</button>
-        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteEmployee('${emp.id}','${esc(emp.name)}')">${lang==='es'?'Eliminar':'Delete'}</button>
+      </div>
+      <div class="emp-actions" style="margin-top:10px">
+        <button class="btn btn-ghost btn-sm" style="width:100%;color:var(--red)" onclick="confirmDeleteEmployee('${emp.id}','${esc(emp.name)}')">🗑️ ${lang==='es'?'Eliminar empleado':'Delete employee'}</button>
       </div>
     </div>`;
   }).join('');

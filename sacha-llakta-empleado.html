@@ -327,7 +327,7 @@ textarea.input{resize:none;min-height:70px}
         </div>
         <div style="position:relative;flex-shrink:0">
           <button class="btn btn-ghost btn-sm" id="receipt-btn" onclick="triggerReceiptPhoto()" title="Adjuntar recibo" style="font-size:18px;padding:9px 12px">📷</button>
-          <input type="file" accept="image/*" capture="environment" id="receipt-input" class="photo-input" onchange="handleReceiptPhoto(event)">
+          <input type="file" accept="image/*" id="receipt-input" class="photo-input" onchange="handleReceiptPhoto(event)">
           <div id="receipt-preview-mini" style="display:none;position:absolute;top:-6px;right:-4px;width:16px;height:16px;background:var(--green);border-radius:50%;font-size:9px;align-items:center;justify-content:center;color:#000;font-weight:800">✓</div>
         </div>
         <button class="btn btn-rhino btn-sm" onclick="addGasto()" data-i="agregar">Agregar</button>
@@ -363,7 +363,7 @@ textarea.input{resize:none;min-height:70px}
         <button class="btn btn-ghost btn-sm" id="card-receipt-btn" onclick="triggerCardReceipt()" style="font-size:18px;padding:9px 12px;position:relative">📷
           <div id="card-receipt-mini" style="display:none;position:absolute;top:-6px;right:-4px;width:16px;height:16px;background:var(--green);border-radius:50%;font-size:9px;align-items:center;justify-content:center;color:#000;font-weight:800">✓</div>
         </button>
-        <input type="file" accept="image/*" capture="environment" id="card-receipt-input" class="photo-input" onchange="handleCardReceipt(event)">
+        <input type="file" accept="image/*" id="card-receipt-input" class="photo-input" onchange="handleCardReceipt(event)">
         <button class="btn btn-rhino btn-sm" onclick="addCardExpense()">Agregar</button>
       </div>
       <div id="card-err" style="font-size:12px;color:var(--red);margin-top:6px;display:none"></div>
