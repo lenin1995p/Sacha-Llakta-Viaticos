@@ -386,7 +386,7 @@ textarea.input{resize:none;min-height:70px}
     <div class="section-header">
       <div class="card-title" data-i="historial">Historial de Viajes</div>
     </div>
-    <button class="btn btn-ghost" onclick="recoverFromCloud()" style="width:100%;margin-bottom:14px" data-i="recuperar-nube">☁️ Recuperar de la nube</button>
+    <button class="btn btn-ghost" onclick="recoverFromCloud()" style="width:100%;margin-bottom:14px" data-i="recuperar-nube">🔁 Sincronizar</button>
     <div id="history-list"></div>
   </div>
 </div>
@@ -584,6 +584,11 @@ const T = {
     'copiar-respaldo':'Copiar datos como respaldo',
     'pegar-notas':'Pega en notas o correo para no perder info',
     'nav-gastos':'Gastos','nav-stats':'Stats','nav-historial':'Historial','nav-config':'Config',
+    'nav-tarjeta':'Tarjeta','recuperar-nube':'🔁 Sincronizar',
+    'saldo-personal-title':'Saldo personal','ajustar-saldo-btn':'✏️ Ajustar saldo',
+    'saldo-personal-desc':'Si tu saldo quedó incorrecto, puedes ajustarlo. Se pedirá una nota del motivo, que tu supervisor podrá ver.',
+    'tarjeta-titulo':'Gastos con tarjeta de empresa',
+    'tarjeta-desc':'Compras con la tarjeta de la empresa (consumibles, gasolina, etc.). No se descuenta de tus viáticos ni de tu saldo — solo se registra como gasto de la empresa.',
     'sesion':'Sesión',
     'datos-contacto-desc':'Estos datos son visibles para tu supervisor.',
     'tel-empleado':'Teléfono',
@@ -638,6 +643,11 @@ const T = {
     'copiar-respaldo':'Copy data as backup',
     'pegar-notas':'Paste in notes or email to keep your data',
     'nav-gastos':'Expenses','nav-stats':'Stats','nav-historial':'History','nav-config':'Settings',
+    'nav-tarjeta':'Card','recuperar-nube':'🔁 Sync',
+    'saldo-personal-title':'Personal balance','ajustar-saldo-btn':'✏️ Adjust balance',
+    'saldo-personal-desc':'If your balance is wrong, you can adjust it. A reason note is required and your supervisor can see it.',
+    'tarjeta-titulo':'Company card expenses',
+    'tarjeta-desc':'Purchases with the company card (supplies, fuel, etc.). It is not deducted from your per-diem or your balance — it is only logged as a company expense.',
     'sesion':'Session',
     'datos-contacto-desc':'This information is visible to your supervisor.',
     'tel-empleado':'Phone',
@@ -984,7 +994,7 @@ async function recoverFromCloud(){
     if(typeof ed.outOfTripAllowed==='boolean') S.outOfTripAllowed=ed.outOfTripAllowed;
 
     save(); render(); if(typeof renderHistory==='function') renderHistory();
-    toast(es?('✓ Recuperado: '+history.length+' viaje(s) y tu saldo'):('✓ Recovered: '+history.length+' trip(s) and your balance'));
+    toast(es?('✓ Sincronizado: '+history.length+' viaje(s) y tu saldo'):('✓ Synced: '+history.length+' trip(s) and your balance'));
   }catch(e){ toast('Error: '+e.message); }
 }
 
