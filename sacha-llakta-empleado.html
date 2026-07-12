@@ -1069,10 +1069,33 @@ function startWatchdog(){
       FB.where('employeeId','==',S.employeeId)
     );
     unsubExpenses=FB.onSnapshot(expQ,(snap)=>{
+      // GUARDIA 1: ignora lecturas desde caché (no son autoritativas). Solo el
+      // servidor decide qué existe — evita borrados fantasma con mala conexión.
+      if(snap.metadata && snap.metadata.fromCache) return;
       const cloudIds=new Set();
-      snap.forEach(docSnap=>cloudIds.add(docSnap.id));
-      if(!expSeeded){ expSeeded=true; return; } // skip first load (already in sync)
+      const cloudDocs=[];
+      snap.forEach(docSnap=>{ cloudIds.add(docSnap.id); cloudDocs.push({id:docSnap.id,data:docSnap.data()}); });
+      if(!expSeeded){
+        expSeeded=true;
+        // AUTO-REPARACIÓN: en la primera lectura, si en la nube hay gastos que no
+        // están en el teléfono (se perdieron localmente), se recuperan solos.
+        let healed=0;
+        const localIds=new Set([...(S.gastos||[]),...(S.outGastos||[])].map(g=>g.cloudId).filter(Boolean));
+        const fmtS=(t)=>(t&&t.toDate)?t.toDate().toLocaleString(lang==='es'?'es-US':'en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+        cloudDocs.forEach(({id,data:x})=>{
+          if(localIds.has(id)) return;
+          const g={ id:Date.now()+Math.floor(Math.random()*100000), desc:x.desc||'', monto:x.monto||0, cat:x.cat||'otro', receipt:x.receipt||null, outOfTrip:!!x.outOfTrip, tripId:x.tripId||null, fecha:fmtS(x.createdAt), cloudId:id };
+          if(x.outOfTrip){ S.outGastos=S.outGastos||[]; S.outGastos.unshift(g); healed++; }
+          else if(S.tripActive && x.tripId && x.tripId===S.currentTripId){ S.gastos.unshift(g); healed++; }
+        });
+        if(healed){ save(); if(typeof render==='function') render(); }
+        return;
+      }
       let changed=false, msgN=0;
+      // GUARDIA 2: si la nube llega VACÍA pero localmente hay varios gastos ya
+      // sincronizados, es casi seguro un error transitorio — no borrar en masa.
+      const syncedLocal=[...(S.gastos||[]),...(S.outGastos||[])].filter(g=>g.cloudId).length;
+      if(cloudIds.size===0 && syncedLocal>1) return;
       // Trip expenses deleted by the supervisor (balance is derived, so no refund needed)
       const removedTrip=S.gastos.filter(g=>g.cloudId && !cloudIds.has(g.cloudId));
       if(removedTrip.length){
