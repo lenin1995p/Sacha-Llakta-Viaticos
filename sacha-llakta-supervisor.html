@@ -1709,7 +1709,7 @@ function editAmount(id){
       <input class="input" id="edit-amount-val" type="number" inputmode="decimal" value="${cur}" autocomplete="off">
     </div>
     <div style="font-size:11.5px;color:var(--muted);line-height:1.45;margin-bottom:12px">
-      ${es?'“Reemplazar” fija el viático base en el monto escrito. “Sumar” lo agrega al viático base actual. El sobrante de un viaje anterior se suma aparte al Iniciar viaje.':'“Replace” sets the base per-diem to the typed amount. “Add” adds it to the current base. Leftover from a previous trip is added separately when starting a trip.'}
+      ${es?'<b style="color:var(--green)">Sumar al base:</b> agrega este monto al viático actual. Si está en viaje, su saldo disponible sube por este mismo monto.<br><b style="color:var(--rhino)">Reemplazar:</b> el viático total pasa a ser exactamente el monto escrito (su disponible será ese total menos lo ya gastado).<br>El sobrante de un viaje anterior se ofrece aparte al Iniciar viaje.':'<b style="color:var(--green)">Add to base:</b> adds this amount to the current per-diem. If they are on a trip, their available balance goes up by this same amount.<br><b style="color:var(--rhino)">Replace:</b> the total per-diem becomes exactly the typed amount (their available will be that total minus what they already spent).<br>Leftover from a previous trip is offered separately when starting a trip.'}
     </div>
     <div id="edit-amount-err" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none"></div>
     <div class="btn-row" style="margin-bottom:8px">
@@ -1739,6 +1739,11 @@ async function saveAmount(id,mode){
     });
     if(emp.code){
       try{ await FB.updateDoc(FB.doc(FB.db,'codes',emp.code),{assignedAmount:val}); }catch(e){}
+    }
+    // Si está en viaje, actualizar también el documento del viaje: si no, el botón
+    // Sincronizar de la app de empleado revierte al monto con que inició el viaje.
+    if(emp.tripActive && emp.currentTripId){
+      try{ await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',emp.currentTripId),{assignedAmount:val},{merge:true}); }catch(e){}
     }
     closeModal();
     showToast(mode==='add'
