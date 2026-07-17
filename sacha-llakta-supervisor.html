@@ -1277,7 +1277,7 @@ function renderEmployees(){
     const restanteColor=restanteShown<0?'var(--red)':(restanteShown>0?'var(--green)':'var(--muted)');
     const nextTripHint=(!emp.tripActive)
       ? `<div style="background:var(--surface2);border:1px dashed var(--border);border-radius:10px;padding:9px 12px;margin-top:10px;font-size:12.5px;line-height:1.5;color:var(--text)">
-           👛 ${lang==='es'?'Saldo personal':'Personal balance'}: <b style="color:var(--green)">$${wallet.toFixed(2)}</b>
+           💰 ${lang==='es'?'Saldo personal':'Personal balance'}: <b style="color:var(--green)">$${wallet.toFixed(2)}</b>
            <span style="color:var(--muted)">&nbsp;·&nbsp;${outAllowed?(lang==='es'?'puede gastarlo fuera de viaje':'can spend out of trips'):(lang==='es'?'se suma al próximo viaje':'rolls into next trip')}</span>
            ${outTotal>0?`<div style="margin-top:5px;color:var(--muted)">${lang==='es'?'Gastos fuera de viaje':'Out-of-trip spend'}: <b style="color:var(--red)">-$${outTotal.toFixed(2)}</b> (${outExpenses.length})</div>`:''}
          </div>`
@@ -1285,8 +1285,14 @@ function renderEmployees(){
     // Nota del último ajuste de saldo (auditoría — quién, de cuánto a cuánto y por qué).
     const adj=emp.lastWalletAdjustment;
     const walletAdjNote = adj ? `<div style="background:rgba(227,169,74,.08);border:1px solid rgba(227,169,74,.25);border-radius:10px;padding:9px 12px;margin-top:8px;font-size:12px;color:var(--text);line-height:1.5">
-        ✏️ ${lang==='es'?'Último ajuste de saldo':'Last balance adjustment'} · <span style="color:var(--muted)">${adj.by==='employee'?(lang==='es'?'por el empleado':'by the employee'):(lang==='es'?'por el supervisor':'by the supervisor')}</span><br>
+        ✏️ ${lang==='es'?'Último ajuste de billetera':'Last wallet adjustment'} · <span style="color:var(--muted)">${adj.by==='employee'?(lang==='es'?'por el empleado':'by the employee'):(lang==='es'?'por el supervisor':'by the supervisor')}</span><br>
         <b>$${(adj.old||0).toFixed(2)} → $${(adj.new||0).toFixed(2)}</b> · <span style="color:var(--muted)">"${esc(adj.reason||'')}"</span>
+      </div>` : '';
+    // Nota del último ajuste de viáticos (auditoría — modo, montos y motivo).
+    const amtAdj=emp.lastAmountAdjustment;
+    const amountAdjNote = amtAdj ? `<div style="background:rgba(74,144,226,.08);border:1px solid rgba(74,144,226,.25);border-radius:10px;padding:9px 12px;margin-top:8px;font-size:12px;color:var(--text);line-height:1.5">
+        💵 ${lang==='es'?'Último ajuste de viáticos':'Last per-diem adjustment'} · <span style="color:var(--muted)">${amtAdj.mode==='add'?(lang==='es'?'suma':'added'):amtAdj.mode==='sub'?(lang==='es'?'resta':'subtracted'):(lang==='es'?'reemplazo':'replaced')}</span><br>
+        <b>$${(amtAdj.old||0).toFixed(2)} → $${(amtAdj.new||0).toFixed(2)}</b> · <span style="color:var(--muted)">"${esc(amtAdj.reason||'')}"</span>
       </div>` : '';
     return `<div class="emp-card">
       <div class="emp-card-head">
@@ -1315,6 +1321,7 @@ function renderEmployees(){
         </div>
       </div>
       ${nextTripHint}
+      ${amountAdjNote}
       ${walletAdjNote}
       <div class="emp-actions">
         <button class="btn btn-ghost btn-sm" onclick="editAmount('${emp.id}')">💵 ${lang==='es'?'Editar viáticos':'Edit per-diem'}</button>
@@ -1323,8 +1330,8 @@ function renderEmployees(){
           : `<button class="btn btn-ghost btn-sm" style="color:var(--green)" onclick="supervisorStartTrip('${emp.id}','${esc(emp.name)}')">${lang==='es'?'Iniciar viaje':'Start trip'}</button>`}
       </div>
       <div class="emp-action-grid">
-        <button class="btn btn-ghost btn-sm" onclick="toggleEmployeeOutOfTrip('${emp.id}')">${outAllowed?'👛':'🔒'} ${lang==='es'?'Fuera de viaje':'Out-of-trip'}<br><b style="color:${outAllowed?'var(--green)':'var(--muted)'};font-size:11px">${outAllowed?(lang==='es'?'Permitido':'Allowed'):(lang==='es'?'Bloqueado':'Blocked')}</b></button>
-        <button class="btn btn-ghost btn-sm" onclick="supAdjustWallet('${emp.id}')">✏️ ${lang==='es'?'Ajustar saldo':'Adjust balance'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleEmployeeOutOfTrip('${emp.id}')">${outAllowed?'💰':'🔒'} ${lang==='es'?'Fuera de viaje':'Out-of-trip'}<br><b style="color:${outAllowed?'var(--green)':'var(--muted)'};font-size:11px">${outAllowed?(lang==='es'?'Permitido':'Allowed'):(lang==='es'?'Bloqueado':'Blocked')}</b></button>
+        <button class="btn btn-ghost btn-sm" onclick="supAdjustWallet('${emp.id}')">💰 ${lang==='es'?'Ajustar billetera':'Adjust wallet'}</button>
         <button class="btn btn-ghost btn-sm" onclick="supViewCardExpenses('${emp.id}')">💳 ${lang==='es'?'Tarjeta empresa':'Company card'}</button>
         <button class="btn btn-ghost btn-sm" onclick="viewEmployeeInfo('${emp.id}')">👤 ${lang==='es'?'Info':'Info'}</button>
         <button class="btn btn-ghost btn-sm" onclick="copyCode('${esc(emp.code)}')">📋 ${lang==='es'?'Compartir':'Share'}</button>
@@ -1489,7 +1496,7 @@ function renderReports(){
           <button class="report-group-head" onclick="toggleTrip('${tripKey}')" style="padding:10px 12px">
             <div class="rg-left">
               <span class="rg-arrow ${topen?'open':''}">▶</span>
-              <span class="rg-name" style="font-size:14px">${isOut?'👛':'🧳'} ${isOut?(es?'Gastos fuera de viaje':'Out-of-trip expenses'):tg.label}</span>
+              <span class="rg-name" style="font-size:14px">${isOut?'💰':'🧳'} ${isOut?(es?'Gastos fuera de viaje':'Out-of-trip expenses'):tg.label}</span>
               ${statusBadge}
             </div>
             <div class="rg-right">
@@ -1700,25 +1707,55 @@ function editAmount(id){
   if(!emp)return;
   const cur=(typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0);
   const es=lang==='es';
+  // Gastado del viaje que se muestra en la tarjeta (para la vista previa en vivo).
+  const previewTripId=emp.currentTripId||emp.lastTripId||null;
+  const spent=(emp.tripActive&&previewTripId)
+    ? allExpenses.filter(ex=>ex.employeeId===emp.id&&ex.tripId===previewTripId).reduce((s,e)=>s+(e.monto||0),0)
+    : 0;
   showModal(`
     <div class="modal-icon">💵</div>
     <div class="modal-title">${es?'Editar viáticos':'Edit per-diem'}</div>
     <div class="modal-body">${es?'Viático base actual de':'Current base per-diem for'} <b style="color:var(--text)">${esc(emp.name)}</b>: <b style="color:var(--rhino)">$${cur.toFixed(2)}</b>.${emp.tripActive?(es?' Se actualizará durante su viaje activo.':' It will update during their active trip.'):''}</div>
     <div class="field">
       <div class="field-label">${es?'Monto (USD)':'Amount (USD)'}</div>
-      <input class="input" id="edit-amount-val" type="number" inputmode="decimal" value="${cur}" autocomplete="off">
+      <input class="input" id="edit-amount-val" type="number" inputmode="decimal" value="${cur}" autocomplete="off" oninput="previewAmount(${cur},${spent},${emp.tripActive?'true':'false'})">
     </div>
+    <div id="edit-amount-preview" style="background:var(--surface2);border:1px dashed var(--border);border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:12.5px;line-height:1.6;color:var(--text)"></div>
+    <div class="field"><div class="field-label">${es?'Motivo (opcional)':'Reason (optional)'}</div>
+      <textarea class="input" id="edit-amount-note" rows="2" style="resize:vertical" placeholder="${es?'Ej: Regreso anticipado, extensión de viaje…':'E.g: Early return, trip extension…'}"></textarea></div>
     <div style="font-size:11.5px;color:var(--muted);line-height:1.45;margin-bottom:12px">
-      ${es?'<b style="color:var(--green)">Sumar al base:</b> agrega este monto al viático actual. Si está en viaje, su saldo disponible sube por este mismo monto.<br><b style="color:var(--rhino)">Reemplazar:</b> el viático total pasa a ser exactamente el monto escrito (su disponible será ese total menos lo ya gastado).<br>El sobrante de un viaje anterior se ofrece aparte al Iniciar viaje.':'<b style="color:var(--green)">Add to base:</b> adds this amount to the current per-diem. If they are on a trip, their available balance goes up by this same amount.<br><b style="color:var(--rhino)">Replace:</b> the total per-diem becomes exactly the typed amount (their available will be that total minus what they already spent).<br>Leftover from a previous trip is offered separately when starting a trip.'}
+      ${es?'<b style="color:var(--green)">Sumar:</b> agrega el monto al viático actual.<br><b style="color:var(--red)">Restar:</b> quita el monto del viático actual (ej: regreso anticipado).<br><b style="color:var(--rhino)">Reemplazar:</b> el viático total pasa a ser exactamente el monto escrito.<br>El sobrante de un viaje anterior se ofrece aparte al Iniciar viaje.':'<b style="color:var(--green)">Add:</b> adds the amount to the current per-diem.<br><b style="color:var(--red)">Subtract:</b> removes the amount from the current per-diem (e.g. early return).<br><b style="color:var(--rhino)">Replace:</b> the total per-diem becomes exactly the typed amount.<br>Leftover from a previous trip is offered separately when starting a trip.'}
     </div>
     <div id="edit-amount-err" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none"></div>
     <div class="btn-row" style="margin-bottom:8px">
-      <button class="btn btn-green" onclick="saveAmount('${id}','add')">${es?'Sumar al base':'Add to base'}</button>
+      <button class="btn btn-green" onclick="saveAmount('${id}','add')">${es?'➕ Sumar':'➕ Add'}</button>
+      <button class="btn btn-ghost" style="color:var(--red)" onclick="saveAmount('${id}','sub')">${es?'➖ Restar':'➖ Subtract'}</button>
       <button class="btn btn-rhino" onclick="saveAmount('${id}','replace')">${es?'Reemplazar':'Replace'}</button>
     </div>
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
     </div>`);
+  previewAmount(cur,spent,!!emp.tripActive);
+}
+
+// Vista previa en vivo: muestra cómo quedaría el viático (y el restante si está en
+// viaje) con cada una de las tres acciones, según el monto escrito. Sin calculadora.
+function previewAmount(cur,spent,tripActive){
+  const es=lang==='es';
+  const box=document.getElementById('edit-amount-preview'); if(!box) return;
+  const raw=parseFloat((document.getElementById('edit-amount-val')||{}).value);
+  if(isNaN(raw)||raw<=0){ box.innerHTML=`<span style="color:var(--muted)">${es?'Escribe un monto para ver la vista previa.':'Type an amount to see the preview.'}</span>`; return; }
+  const r2=v=>Math.round(v*100)/100;
+  const rows=[
+    {lbl:es?'➕ Sumar':'➕ Add', v:r2(cur+raw), c:'var(--green)'},
+    {lbl:es?'➖ Restar':'➖ Subtract', v:r2(cur-raw), c:'var(--red)'},
+    {lbl:es?'Reemplazar':'Replace', v:r2(raw), c:'var(--rhino)'}
+  ];
+  box.innerHTML=rows.map(r=>{
+    const bad=r.v<0;
+    const rest=tripActive?` · ${es?'restante':'remaining'}: <b style="color:${(r.v-spent)<0?'var(--red)':'var(--green)'}">$${r2(r.v-spent).toFixed(2)}</b>`:'';
+    return `<div>${r.lbl} → ${es?'viático':'per-diem'}: <b style="color:${bad?'var(--red)':r.c}">$${r.v.toFixed(2)}</b>${bad?(es?' ⚠️ negativo':' ⚠️ negative'):rest}</div>`;
+  }).join('');
 }
 
 async function saveAmount(id,mode){
@@ -1729,13 +1766,21 @@ async function saveAmount(id,mode){
   const es=lang==='es';
   if(isNaN(raw)||raw<=0){err.textContent=es?'Ingresa un monto válido.':'Enter a valid amount.';err.style.display='block';return;}
   const curAssigned=(typeof emp.assignedAmount==='number')?emp.assignedAmount:(emp.initialBalance||0);
-  // 'add' tops up the base per-diem; 'replace' overwrites it. Leftover is untouched
-  // here so it can't be double-counted against the Iniciar viaje checkbox.
-  const val=(mode==='add')?Math.round((curAssigned+raw)*100)/100:Math.round(raw*100)/100;
+  // 'add' tops up the base per-diem; 'sub' reduces it; 'replace' overwrites it.
+  // Leftover is untouched here so it can't be double-counted at Iniciar viaje.
+  const val=(mode==='add')?Math.round((curAssigned+raw)*100)/100
+           :(mode==='sub')?Math.round((curAssigned-raw)*100)/100
+           :Math.round(raw*100)/100;
+  if(val<0){err.textContent=es?'El viático quedaría negativo ($'+val.toFixed(2)+'). Reduce el monto.':'Per-diem would go negative ($'+val.toFixed(2)+'). Lower the amount.';err.style.display='block';return;}
   try{
+    const noteEl=document.getElementById('edit-amount-note');
+    const note=(noteEl?noteEl.value:'').trim();
     const cmd={type:'setAmount',amount:val,ts:Date.now()};
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
-      assignedAmount:val, supervisorCommand:cmd
+      assignedAmount:val, supervisorCommand:cmd,
+      lastAmountAdjustment:{ by:'supervisor', old:curAssigned, new:val, mode:mode,
+        reason:note||(mode==='add'?(es?'Suma de viáticos':'Per-diem top-up'):mode==='sub'?(es?'Resta de viáticos':'Per-diem reduction'):(es?'Reemplazo de viáticos':'Per-diem replacement')),
+        at:FB.serverTimestamp() }
     });
     if(emp.code){
       try{ await FB.updateDoc(FB.doc(FB.db,'codes',emp.code),{assignedAmount:val}); }catch(e){}
@@ -1748,6 +1793,8 @@ async function saveAmount(id,mode){
     closeModal();
     showToast(mode==='add'
       ? (es?`✓ Sumado — viático base $${val.toFixed(2)}`:`✓ Added — base per-diem $${val.toFixed(2)}`)
+      : mode==='sub'
+      ? (es?`✓ Restado — viático base $${val.toFixed(2)}`:`✓ Subtracted — base per-diem $${val.toFixed(2)}`)
       : (es?'✓ Viáticos actualizados':'✓ Per-diem updated'));
   }catch(e){showToast('Error: '+e.message);}
 }
@@ -2453,10 +2500,11 @@ function supAdjustWallet(id){
   const emp=employees.find(e=>e.id===id); if(!emp) return;
   const cur=(typeof emp.walletBalance==='number'?emp.walletBalance:0).toFixed(2);
   showModal(`
-    <div class="modal-title">✏️ ${es?'Ajustar saldo personal':'Adjust personal balance'}</div>
+    <div class="modal-title">💰 ${es?'Ajustar billetera personal':'Adjust personal wallet'}</div>
     <div style="font-size:13px;color:var(--text);margin:6px 0 2px;font-weight:700">${esc(emp.name||'')}</div>
-    <div style="font-size:12.5px;color:var(--dim);margin-bottom:14px">${es?'Saldo actual':'Current balance'}: <b style="color:var(--green)">$${cur}</b></div>
-    <div class="field"><div class="field-label">${es?'Nuevo saldo (USD)':'New balance (USD)'}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.5">${es?'Esto NO modifica los viáticos del viaje. Es el dinero personal del empleado (sobrantes de viajes anteriores).':'This does NOT change trip per-diem. It is the employee\'s personal money (leftovers from past trips).'}</div>
+    <div style="font-size:12.5px;color:var(--dim);margin-bottom:14px">${es?'Saldo actual de billetera':'Current wallet balance'}: <b style="color:var(--green)">$${cur}</b></div>
+    <div class="field"><div class="field-label">${es?'Nuevo saldo de billetera (USD)':'New wallet balance (USD)'}</div>
       <div class="input-prefix"><span class="pfx">$</span><input class="input" id="sup-adj-val" type="number" min="0" step="0.01" value="${cur}" inputmode="decimal"></div></div>
     <div class="field"><div class="field-label">${es?'Motivo (opcional)':'Reason (optional)'}</div>
       <textarea class="input" id="sup-adj-note" rows="2" style="resize:vertical" placeholder="${es?'Ej: Corrección administrativa':'E.g: Administrative correction'}"></textarea></div>
@@ -2486,7 +2534,7 @@ async function doSupAdjustWallet(id){
     });
     emp.walletBalance=val;
     closeModal();
-    showToast(es?'✓ Saldo ajustado':'✓ Balance adjusted');
+    showToast(es?'✓ Billetera ajustada':'✓ Wallet adjusted');
     renderEmployees();
   }catch(e){ showToast('Error: '+e.message); }
 }
@@ -3411,7 +3459,7 @@ window.confirmCancelSubscription=confirmCancelSubscription;window.reallyCancelSu
 window.finishCancel=finishCancel;
 window.editCompanyAddress=editCompanyAddress;window.saveCompanyAddress=saveCompanyAddress;window.adminGrantPlan=adminGrantPlan;
 window.editSupervisorPhone=editSupervisorPhone;window.saveSupervisorPhone=saveSupervisorPhone;
-window.editAmount=editAmount;window.saveAmount=saveAmount;
+window.editAmount=editAmount;window.saveAmount=saveAmount;window.previewAmount=previewAmount;
 window.openLiveEmployees=openLiveEmployees;window.openLiveActiveTrips=openLiveActiveTrips;window.openLiveSpentToday=openLiveSpentToday;window.saveEmpNote=saveEmpNote;
 window.renderAdminTab=renderAdminTab;window.adminOnSearch=adminOnSearch;window.adminRefresh=adminRefresh;window.adminPlanMenu=adminPlanMenu;window.adminSetPlan=adminSetPlan;window.adminViewCompany=adminViewCompany;window.adminDeleteCompany=adminDeleteCompany;window.adminDoDeleteCompany=adminDoDeleteCompany;
 window.enterCompanyAsAdmin=enterCompanyAsAdmin;window.exitCompanyAsAdmin=exitCompanyAsAdmin;

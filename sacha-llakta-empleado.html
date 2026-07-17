@@ -449,7 +449,7 @@ textarea.input{resize:none;min-height:70px}
 
       <!-- SALDO PERSONAL -->
       <div class="card" id="cfg-wallet-card" style="display:none">
-        <div class="card-title">👛 <span data-i="saldo-personal-title">Saldo personal</span></div>
+        <div class="card-title">💰 <span data-i="saldo-personal-title">Saldo personal</span></div>
         <div style="font-size:26px;font-weight:800;color:var(--green)" id="cfg-wallet-val">$0.00</div>
         <div style="font-size:12px;color:var(--dim);line-height:1.5;margin:8px 0 12px" data-i="saldo-personal-desc">Si tu saldo quedó incorrecto, puedes ajustarlo. Se pedirá una nota del motivo, que tu supervisor podrá ver.</div>
         <button class="btn btn-ghost" onclick="openAdjustWallet()" data-i="ajustar-saldo-btn">✏️ Ajustar saldo</button>
@@ -1176,6 +1176,18 @@ function applySupervisorDoc(d){
     changed=true;
   }
 
+  // --- Nota del último ajuste de viáticos (SOLO LECTURA: la escribe el supervisor,
+  //     aquí únicamente se muestra; el empleado no puede editarla) ---
+  if(d.lastAmountAdjustment && d.lastAmountAdjustment.by==='supervisor'){
+    const a=d.lastAmountAdjustment;
+    const key=(a.old||0)+'>'+(a.new||0)+'|'+(a.mode||'')+'|'+(a.reason||'');
+    if(S.supAmountNoteKey!==key){
+      S.supAmountNote={old:a.old||0,new:a.new||0,mode:a.mode||'',reason:a.reason||''};
+      S.supAmountNoteKey=key;
+      changed=true;
+    }
+  }
+
   // --- Supervisor command (start / end / setAmount) ---
   const cmd=d.supervisorCommand;
   if(cmd && cmd.ts && cmd.ts>lastCommandTs){
@@ -1204,7 +1216,8 @@ function applySupervisorDoc(d){
       if(typeof cmd.amount==='number'&&cmd.amount>0){
         S.initialBalance=cmd.amount;
         changed=true;
-        toast(lang==='es'?'Viáticos actualizados: $'+cmd.amount.toFixed(2):'Per-diem updated: $'+cmd.amount.toFixed(2));
+        const rsn=(d.lastAmountAdjustment&&d.lastAmountAdjustment.by==='supervisor'&&d.lastAmountAdjustment.reason)?(' — "'+d.lastAmountAdjustment.reason+'"'):'';
+        toast((lang==='es'?'Viáticos actualizados: $'+cmd.amount.toFixed(2):'Per-diem updated: $'+cmd.amount.toFixed(2))+rsn);
       }
     } else if(cmd.type==='reopen'){
       // Supervisor/super-admin reopened a trip that was finalized by mistake.
@@ -1719,10 +1732,21 @@ function renderAlert(){
   const balance=calcBalance();
   const pct=balance/Math.max(1,S.initialBalance);
   const az=document.getElementById('alert-zone');
+  // Nota informativa (solo lectura) del último ajuste de viáticos hecho por el supervisor.
+  let noteHtml='';
+  if(S.tripActive && S.supAmountNote){
+    const n=S.supAmountNote;
+    const modeTxt=n.mode==='add'?(lang==='es'?'suma':'added'):n.mode==='sub'?(lang==='es'?'resta':'subtracted'):(lang==='es'?'ajuste':'adjusted');
+    noteHtml='<div style="background:rgba(74,144,226,.08);border:1px solid rgba(74,144,226,.25);border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:12px;color:var(--text);line-height:1.5">'
+      +'💵 '+(lang==='es'?'Ajuste de viáticos del supervisor':'Supervisor per-diem adjustment')+' · <span style="color:var(--dim)">'+modeTxt+'</span><br>'
+      +'<b>$'+(n.old||0).toFixed(2)+' → $'+(n.new||0).toFixed(2)+'</b>'
+      +(n.reason?' · <span style="color:var(--dim)">"'+esc(n.reason)+'"</span>':'')
+      +'</div>';
+  }
   if(!S.tripActive){az.innerHTML='';return;}
-  if(pct<=0.1) az.innerHTML='<div class="alert alert-red">⚠️ '+(lang==='es'?'¡Menos del 10% disponible! Gasta con mucho cuidado.':'Less than 10% remaining! Spend very carefully.')+'</div>';
-  else if(pct<=0.2) az.innerHTML='<div class="alert alert-yellow">⚠️ '+(lang==='es'?'Te queda menos del 20% del presupuesto.':'Less than 20% of your budget remains.')+'</div>';
-  else az.innerHTML='';
+  if(pct<=0.1) az.innerHTML=noteHtml+'<div class="alert alert-red">⚠️ '+(lang==='es'?'¡Menos del 10% disponible! Gasta con mucho cuidado.':'Less than 10% remaining! Spend very carefully.')+'</div>';
+  else if(pct<=0.2) az.innerHTML=noteHtml+'<div class="alert alert-yellow">⚠️ '+(lang==='es'?'Te queda menos del 20% del presupuesto.':'Less than 20% of your budget remains.')+'</div>';
+  else az.innerHTML=noteHtml;
 }
 
 function renderForm(){
@@ -1740,7 +1764,7 @@ function renderForm(){
     nt.style.padding='16px';
     nt.innerHTML=`
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
-        <span style="font-size:20px">👛</span>
+        <span style="font-size:20px">💰</span>
         <div style="font-size:15px;font-weight:800">${lang==='es'?'Gasto fuera de viaje':'Out-of-trip expense'}</div>
       </div>
       <div style="font-size:12.5px;color:var(--dim);margin-bottom:12px">${lang==='es'?'Se descuenta de tu saldo personal':'Deducted from your personal balance'} <b style="color:var(--green)">$${(S.wallet||0).toFixed(2)}</b></div>
@@ -2178,7 +2202,7 @@ function renderHistory(){
         <div>
           <div class="trip-card-company">${esc(trip.company)}</div>
           <div class="trip-card-emp">${esc(trip.employee)}</div>
-          <div class="trip-card-dates">👛 ${lang==='es'?'Gastos fuera de viaje':'Out-of-trip expenses'} · ${trip.archivedAt||trip.periodEnd||'—'}</div>
+          <div class="trip-card-dates">💰 ${lang==='es'?'Gastos fuera de viaje':'Out-of-trip expenses'} · ${trip.archivedAt||trip.periodEnd||'—'}</div>
         </div>
         <div class="badge" style="background:rgba(212,165,74,.15);color:var(--rhino)">${lang==='es'?'Personal':'Personal'}</div>
       </div>
