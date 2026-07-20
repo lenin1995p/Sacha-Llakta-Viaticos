@@ -449,7 +449,7 @@ textarea.input{resize:none;min-height:70px}
 
       <!-- SALDO PERSONAL -->
       <div class="card" id="cfg-wallet-card" style="display:none">
-        <div class="card-title">💰 <span data-i="saldo-personal-title">Saldo personal</span></div>
+        <div class="card-title">👛 <span data-i="saldo-personal-title">Saldo personal</span></div>
         <div style="font-size:26px;font-weight:800;color:var(--green)" id="cfg-wallet-val">$0.00</div>
         <div style="font-size:12px;color:var(--dim);line-height:1.5;margin:8px 0 12px" data-i="saldo-personal-desc">Si tu saldo quedó incorrecto, puedes ajustarlo. Se pedirá una nota del motivo, que tu supervisor podrá ver.</div>
         <button class="btn btn-ghost" onclick="openAdjustWallet()" data-i="ajustar-saldo-btn">✏️ Ajustar saldo</button>
@@ -1055,7 +1055,11 @@ function startWatchdog(){
   const codeRef=FB.doc(FB.db,'codes',S.employeeCode);
   unsubWatchdog=FB.onSnapshot(codeRef,(snap)=>{
     if(watchdogGrace){ watchdogGrace=false; return; }
-    if(!snap.exists()){ handleExpulsion(); }
+    if(snap.exists()) return;
+    // Firestore emite primero desde la caché: un "no existe" de caché NO es
+    // prueba de nada (señal débil / caché limpia). Solo confirmar con el servidor.
+    if(snap.metadata && snap.metadata.fromCache) return;
+    confirmExpulsion();
   },(err)=>{ console.warn('watchdog code error',err); });
 
   // 2) Watch the employee doc → amount + trip commands
@@ -1064,7 +1068,11 @@ function startWatchdog(){
     // seed lastCommandTs so we don't replay an old command on first load
     lastCommandTs=S.lastCommandTs||0;
     unsubEmpDoc=FB.onSnapshot(empRef,(snap)=>{
-      if(!snap.exists()){ handleExpulsion(); return; }
+      if(!snap.exists()){
+        if(snap.metadata && snap.metadata.fromCache) return; // caché ≠ borrado real
+        confirmExpulsion();
+        return;
+      }
       const d=snap.data();
       applySupervisorDoc(d);
     },(err)=>{ console.warn('watchdog emp error',err); });
@@ -1176,18 +1184,6 @@ function applySupervisorDoc(d){
     changed=true;
   }
 
-  // --- Nota del último ajuste de viáticos (SOLO LECTURA: la escribe el supervisor,
-  //     aquí únicamente se muestra; el empleado no puede editarla) ---
-  if(d.lastAmountAdjustment && d.lastAmountAdjustment.by==='supervisor'){
-    const a=d.lastAmountAdjustment;
-    const key=(a.old||0)+'>'+(a.new||0)+'|'+(a.mode||'')+'|'+(a.reason||'');
-    if(S.supAmountNoteKey!==key){
-      S.supAmountNote={old:a.old||0,new:a.new||0,mode:a.mode||'',reason:a.reason||''};
-      S.supAmountNoteKey=key;
-      changed=true;
-    }
-  }
-
   // --- Supervisor command (start / end / setAmount) ---
   const cmd=d.supervisorCommand;
   if(cmd && cmd.ts && cmd.ts>lastCommandTs){
@@ -1216,8 +1212,7 @@ function applySupervisorDoc(d){
       if(typeof cmd.amount==='number'&&cmd.amount>0){
         S.initialBalance=cmd.amount;
         changed=true;
-        const rsn=(d.lastAmountAdjustment&&d.lastAmountAdjustment.by==='supervisor'&&d.lastAmountAdjustment.reason)?(' — "'+d.lastAmountAdjustment.reason+'"'):'';
-        toast((lang==='es'?'Viáticos actualizados: $'+cmd.amount.toFixed(2):'Per-diem updated: $'+cmd.amount.toFixed(2))+rsn);
+        toast(lang==='es'?'Viáticos actualizados: $'+cmd.amount.toFixed(2):'Per-diem updated: $'+cmd.amount.toFixed(2));
       }
     } else if(cmd.type==='reopen'){
       // Supervisor/super-admin reopened a trip that was finalized by mistake.
@@ -1314,6 +1309,28 @@ function applyRemoteEndTrip(){
 }
 
 let expulsionShown=false;
+let expulsionChecking=false;
+
+// Antes de expulsar, RE-LEER directamente del servidor. Solo expulsamos si el
+// servidor confirma que el código ya no existe (Nuevo código / empleado eliminado).
+// Cualquier error de red = no expulsar (mejor una sesión de más que un susto de menos).
+async function confirmExpulsion(){
+  if(expulsionShown||expulsionChecking) return;
+  expulsionChecking=true;
+  try{
+    const codeSnap=await FB.getDoc(FB.doc(FB.db,'codes',S.employeeCode));
+    if(codeSnap.exists()){ return; } // falsa alarma: el código sigue vivo
+    if(S.employeeId){
+      const empSnap=await FB.getDoc(FB.doc(FB.db,'companies',S.companyId,'employees',S.employeeId));
+      if(empSnap.exists() && empSnap.data().code===S.employeeCode){ return; } // código intacto
+    }
+    handleExpulsion();
+  }catch(e){
+    console.warn('confirmExpulsion: sin confirmación del servidor, no se expulsa',e);
+  }finally{
+    expulsionChecking=false;
+  }
+}
 function handleExpulsion(){
   if(expulsionShown) return;
   expulsionShown=true;
@@ -1556,7 +1573,12 @@ function triggerCardReceipt(){ const i=document.getElementById('card-receipt-inp
 function handleCardReceipt(event){
   const f=event.target.files&&event.target.files[0]; if(!f) return;
   const r=new FileReader();
-  r.onload=(e)=>{ cardReceiptB64=e.target.result; const m=document.getElementById('card-receipt-mini'); if(m) m.style.display='flex'; };
+  r.onload=async (e)=>{
+    const b64=await compressImage(e.target.result,1300,0.8);
+    cardReceiptB64=b64;
+    const m=document.getElementById('card-receipt-mini'); if(m) m.style.display='flex';
+    ocrScan(b64,'card');
+  };
   r.readAsDataURL(f);
 }
 function renderCardCatChips(){
@@ -1732,21 +1754,10 @@ function renderAlert(){
   const balance=calcBalance();
   const pct=balance/Math.max(1,S.initialBalance);
   const az=document.getElementById('alert-zone');
-  // Nota informativa (solo lectura) del último ajuste de viáticos hecho por el supervisor.
-  let noteHtml='';
-  if(S.tripActive && S.supAmountNote){
-    const n=S.supAmountNote;
-    const modeTxt=n.mode==='add'?(lang==='es'?'suma':'added'):n.mode==='sub'?(lang==='es'?'resta':'subtracted'):(lang==='es'?'ajuste':'adjusted');
-    noteHtml='<div style="background:rgba(74,144,226,.08);border:1px solid rgba(74,144,226,.25);border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:12px;color:var(--text);line-height:1.5">'
-      +'💵 '+(lang==='es'?'Ajuste de viáticos del supervisor':'Supervisor per-diem adjustment')+' · <span style="color:var(--dim)">'+modeTxt+'</span><br>'
-      +'<b>$'+(n.old||0).toFixed(2)+' → $'+(n.new||0).toFixed(2)+'</b>'
-      +(n.reason?' · <span style="color:var(--dim)">"'+esc(n.reason)+'"</span>':'')
-      +'</div>';
-  }
   if(!S.tripActive){az.innerHTML='';return;}
-  if(pct<=0.1) az.innerHTML=noteHtml+'<div class="alert alert-red">⚠️ '+(lang==='es'?'¡Menos del 10% disponible! Gasta con mucho cuidado.':'Less than 10% remaining! Spend very carefully.')+'</div>';
-  else if(pct<=0.2) az.innerHTML=noteHtml+'<div class="alert alert-yellow">⚠️ '+(lang==='es'?'Te queda menos del 20% del presupuesto.':'Less than 20% of your budget remains.')+'</div>';
-  else az.innerHTML=noteHtml;
+  if(pct<=0.1) az.innerHTML='<div class="alert alert-red">⚠️ '+(lang==='es'?'¡Menos del 10% disponible! Gasta con mucho cuidado.':'Less than 10% remaining! Spend very carefully.')+'</div>';
+  else if(pct<=0.2) az.innerHTML='<div class="alert alert-yellow">⚠️ '+(lang==='es'?'Te queda menos del 20% del presupuesto.':'Less than 20% of your budget remains.')+'</div>';
+  else az.innerHTML='';
 }
 
 function renderForm(){
@@ -1764,7 +1775,7 @@ function renderForm(){
     nt.style.padding='16px';
     nt.innerHTML=`
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
-        <span style="font-size:20px">💰</span>
+        <span style="font-size:20px">👛</span>
         <div style="font-size:15px;font-weight:800">${lang==='es'?'Gasto fuera de viaje':'Out-of-trip expense'}</div>
       </div>
       <div style="font-size:12.5px;color:var(--dim);margin-bottom:12px">${lang==='es'?'Se descuenta de tu saldo personal':'Deducted from your personal balance'} <b style="color:var(--green)">$${(S.wallet||0).toFixed(2)}</b></div>
@@ -1937,11 +1948,66 @@ function triggerReceiptPhoto(){document.getElementById('receipt-input').click();
 function handleReceiptPhoto(event){
   const file=event.target.files[0];if(!file)return;
   const reader=new FileReader();
-  reader.onload=e=>{
-    pendingReceiptB64=e.target.result;
+  reader.onload=async e=>{
+    // Comprimir con más calidad para que Vision pueda leer el texto
+    const b64=await compressImage(e.target.result,1300,0.8);
+    pendingReceiptB64=b64;
     document.getElementById('receipt-preview-mini').style.display='flex';
+    ocrScan(b64,'main');
   };
   reader.readAsDataURL(file);
+}
+
+// ═══ OCR DE RECIBOS (Cloud Vision vía Cloud Function) ═══
+const OCR_FN_URL='https://us-central1-sacha-llakta-viaticos.cloudfunctions.net/ocrReceipt';
+
+// Adivinar la categoría según el comercio / texto del recibo
+function guessCategory(merchant){
+  const s=(merchant||'').toLowerCase();
+  const rules=[
+    ['combustible',/gas|fuel|shell|exxon|chevron|texaco|mobil|conoco|phillips 66|quiktrip|\bqt\b|casey|pilot|love'?s|circle k|kwik|murphy|valero|sinclair|bp\b/],
+    ['hotel',/hotel|motel|\binn\b|suites|lodge|resort|marriott|hilton|hampton|holiday|wyndham|best western|comfort|quality inn|la quinta|super 8|days inn|airbnb/],
+    ['comida',/restaurant|grill|cafe|caf\u00e9|coffee|pizza|burger|taco|subway|mcdonald|wendy|chick|kfc|popeyes|chipotle|panda|denny|ihop|applebee|chili|buffet|bbq|steak|donut|dunkin|starbucks|sonic|braum|deli|bakery|panader|taqueria|pollo|mariscos|sushi|wok|food/],
+    ['peajes',/toll|peaje|turnpike|e-?zpass|pikepass/],
+    ['transporte',/uber|lyft|taxi|rental|rent-?a-?car|hertz|enterprise|avis|budget|parking|estacionamiento|airline|airport|amtrak|greyhound/],
+    ['herramientas',/home depot|lowe'?s|harbor freight|grainger|fastenal|ace hardware|tractor supply|northern tool|menards|tool|ferreter/],
+  ];
+  for(const [id,re] of rules){ if(re.test(s)) return id; }
+  return null;
+}
+
+async function ocrScan(b64,target){
+  if(!S.linked||!S.companyId||!S.employeeId||!S.employeeCode) return; // sin vínculo no hay OCR
+  const es=lang==='es';
+  toast(es?'🔍 Leyendo recibo…':'🔍 Reading receipt…');
+  try{
+    const resp=await fetch(OCR_FN_URL,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({companyId:S.companyId,employeeId:S.employeeId,code:S.employeeCode,image:b64})
+    });
+    const data=await resp.json();
+    if(!resp.ok){ toast(es?('No se pudo escanear: '+(data.error||resp.status)):('Scan failed: '+(data.error||resp.status))); return; }
+    if(!data.found || (data.amount==null && !data.merchant)){
+      toast(es?'No se detectó el total — ingrésalo manualmente':'Could not detect the total — enter it manually');
+      return;
+    }
+    const montoEl=document.getElementById(target==='card'?'card-monto':'inp-monto');
+    const descEl=document.getElementById(target==='card'?'card-desc':'inp-desc');
+    // Solo llenar campos vacíos: nunca pisar lo que el empleado ya escribió
+    if(data.amount!=null && montoEl && !(parseFloat(montoEl.value)>0)) montoEl.value=data.amount.toFixed(2);
+    if(data.merchant && descEl && !descEl.value.trim()) descEl.value=data.merchant;
+    const catGuess=guessCategory((data.merchant||''));
+    if(catGuess && S.categories.some(c=>c.id===catGuess)){
+      if(target==='card'){ if(typeof activeCardCat!=='undefined'){ activeCardCat=catGuess; if(typeof renderCardCatChips==='function') renderCardCatChips(); } }
+      else { activeCat=catGuess; if(typeof renderCatChips==='function') renderCatChips(); }
+    }
+    const bits=[];
+    if(data.amount!=null) bits.push('$'+data.amount.toFixed(2));
+    if(data.merchant) bits.push(data.merchant);
+    toast('✓ '+(es?'Detectado: ':'Detected: ')+bits.join(' — '));
+  }catch(e){
+    toast(es?'Sin conexión con el escáner — ingresa el monto manualmente':'Scanner unavailable — enter the amount manually');
+  }
 }
 function viewReceipt(id){
   const g=S.gastos.find(x=>x.id==id);if(!g||!g.receipt)return;
@@ -2202,7 +2268,7 @@ function renderHistory(){
         <div>
           <div class="trip-card-company">${esc(trip.company)}</div>
           <div class="trip-card-emp">${esc(trip.employee)}</div>
-          <div class="trip-card-dates">💰 ${lang==='es'?'Gastos fuera de viaje':'Out-of-trip expenses'} · ${trip.archivedAt||trip.periodEnd||'—'}</div>
+          <div class="trip-card-dates">👛 ${lang==='es'?'Gastos fuera de viaje':'Out-of-trip expenses'} · ${trip.archivedAt||trip.periodEnd||'—'}</div>
         </div>
         <div class="badge" style="background:rgba(212,165,74,.15);color:var(--rhino)">${lang==='es'?'Personal':'Personal'}</div>
       </div>
