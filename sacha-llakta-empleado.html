@@ -50,6 +50,14 @@ body{padding-bottom:80px}
 .header-right{display:flex;align-items:center;gap:8px}
 .lang-btn{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:11px;font-weight:700;padding:5px 10px;cursor:pointer;letter-spacing:1px}
 .lang-btn:active{opacity:.7}
+.sync-btn{background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:14px;padding:5px 8px;cursor:pointer;line-height:1;transition:opacity .2s}
+.sync-btn:active{opacity:.6}
+.sync-btn.state-synced{color:#22c55e;border-color:#22c55e55}
+.sync-btn.state-pending{color:#f59e0b;border-color:#f59e0b88}
+.sync-btn.state-syncing{color:#60a5fa;border-color:#60a5fa88}
+.sync-btn.state-offline{color:#ef4444;border-color:#ef444488}
+.sync-btn.spinning{animation:syncspin 1s linear infinite}
+@keyframes syncspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 .trip-pill{padding:6px 13px;border-radius:20px;font-size:11px;font-weight:800;border:none;cursor:pointer;letter-spacing:1px;text-transform:uppercase}
 .pill-idle{background:#1a2235;color:var(--dim);border:1px solid var(--border)}
 .pill-active{background:linear-gradient(135deg,#064e3b,#065f46);color:var(--green);box-shadow:0 0 12px #00d97e33}
@@ -291,6 +299,7 @@ textarea.input{resize:none;min-height:70px}
       <div class="trip-label" id="hdr-trip-label">—</div>
     </div>
     <div class="header-right">
+      <button class="sync-btn" id="sync-btn" onclick="forceSync()" title="Sincronizar">🔄</button>
       <button class="lang-btn" onclick="toggleLang()" id="lang-btn">EN</button>
       <button class="trip-pill pill-idle" id="trip-pill" onclick="handleTripPill()">● INICIO</button>
     </div>
@@ -449,7 +458,7 @@ textarea.input{resize:none;min-height:70px}
 
       <!-- SALDO PERSONAL -->
       <div class="card" id="cfg-wallet-card" style="display:none">
-        <div class="card-title">👛 <span data-i="saldo-personal-title">Saldo personal</span></div>
+        <div class="card-title">💵 <span data-i="saldo-personal-title">Saldo personal</span></div>
         <div style="font-size:26px;font-weight:800;color:var(--green)" id="cfg-wallet-val">$0.00</div>
         <div style="font-size:12px;color:var(--dim);line-height:1.5;margin:8px 0 12px" data-i="saldo-personal-desc">Si tu saldo quedó incorrecto, puedes ajustarlo. Se pedirá una nota del motivo, que tu supervisor podrá ver.</div>
         <button class="btn btn-ghost" onclick="openAdjustWallet()" data-i="ajustar-saldo-btn">✏️ Ajustar saldo</button>
@@ -740,6 +749,42 @@ function save(){try{localStorage.setItem(SK,JSON.stringify(S));}catch{}}
 let FB=null;
 let fbReady=false;
 let syncQueue=[];
+let syncState='synced';   // synced | pending | syncing | offline
+let pendingCount=0;
+let syncRetryTimer=null;
+
+function setSyncState(state){
+  syncState=state;
+  const btn=document.getElementById('sync-btn');
+  if(!btn) return;
+  btn.classList.remove('state-synced','state-pending','state-syncing','state-offline','spinning');
+  const es=lang==='es';
+  if(state==='syncing'){ btn.textContent='🔄'; btn.classList.add('state-syncing','spinning'); btn.title=es?'Sincronizando…':'Syncing…'; }
+  else if(state==='pending'){ btn.textContent='⚠️'; btn.classList.add('state-pending'); btn.title=es?(pendingCount+' cambio(s) sin subir — toca para reintentar'):(pendingCount+' change(s) not uploaded — tap to retry'); }
+  else if(state==='offline'){ btn.textContent='⚠️'; btn.classList.add('state-offline'); btn.title=es?'Sin conexión — toca para reintentar':'Offline — tap to retry'; }
+  else { btn.textContent='✓'; btn.classList.add('state-synced'); btn.title=es?'Todo al día — toca para sincronizar':'Up to date — tap to sync'; }
+}
+
+// Envuelve una operación de sync: si falla (sin señal), la reencola y marca pendiente.
+function runSyncOp(fn){
+  pendingCount++;
+  setSyncState('syncing');
+  Promise.resolve().then(fn).then(()=>{
+    pendingCount=Math.max(0,pendingCount-1);
+    if(pendingCount===0 && syncQueue.length===0) setSyncState('synced');
+  }).catch(()=>{
+    pendingCount=Math.max(0,pendingCount-1);
+    syncQueue.push(fn);        // reintentar luego
+    setSyncState('offline');
+    scheduleSyncRetry();
+  });
+}
+
+function scheduleSyncRetry(){
+  if(syncRetryTimer) return;
+  syncRetryTimer=setTimeout(()=>{ syncRetryTimer=null; flushSyncQueue(); },15000); // reintento cada 15s
+}
+
 window.addEventListener('firebase-ready',()=>{
   FB=window.fb; fbReady=true;
   flushSyncQueue();
@@ -751,6 +796,15 @@ window.addEventListener('firebase-ready',()=>{
     try{ syncWallet(); }catch(e){}
   }
 });
+// Al recuperar la conexión, reintentar automáticamente.
+window.addEventListener('online',()=>{ flushSyncQueue(); });
+
+// Botón manual: fuerza subida de pendientes + re-lectura desde la nube.
+function forceSync(){
+  flushSyncQueue();
+  if(typeof recoverFromCloud==='function' && S.linked){ recoverFromCloud(); }
+  if(pendingCount===0 && syncQueue.length===0) setSyncState('synced');
+}
 
 // Compress an image dataURL to fit well under Firestore's 1MB limit
 function compressImage(dataUrl, maxW=900, quality=0.55){
@@ -778,12 +832,14 @@ function compressImage(dataUrl, maxW=900, quality=0.55){
 }
 
 function flushSyncQueue(){
-  if(!fbReady||!S.linked||!S.companyId)return;
+  if(!fbReady||!S.linked||!S.companyId){ if(syncQueue.length) setSyncState('offline'); return; }
   const q=[...syncQueue];syncQueue=[];
-  q.forEach(fn=>fn());
+  if(q.length) q.forEach(fn=>runSyncOp(fn));
+  else if(pendingCount===0) setSyncState('synced');
 }
 function queueSync(fn){
   syncQueue.push(fn);
+  setSyncState('pending');
   if(fbReady)flushSyncQueue();
 }
 
@@ -812,7 +868,7 @@ async function syncExpenseToCloud(gasto){
     // store cloud id back on local gasto for later deletion
     const g=S.gastos.find(x=>x.id===gasto.id);
     if(g){g.cloudId=ref.id;save();}
-  }catch(e){ console.warn('sync expense failed',e); }
+  }catch(e){ console.warn('sync expense failed',e); throw e; }
 }
 
 // Remove an expense from cloud
@@ -830,7 +886,7 @@ async function syncWallet(){
     await FB.updateDoc(FB.doc(FB.db,'companies',S.companyId,'employees',S.employeeId),{
       walletBalance: Math.max(0, Math.round((S.wallet||0)*100)/100)
     });
-  }catch(e){ console.warn('sync wallet failed',e); }
+  }catch(e){ console.warn('sync wallet failed',e); throw e; }
 }
 
 // Push an out-of-trip expense (spent from the personal balance, no active trip) to the cloud.
@@ -849,12 +905,12 @@ async function syncOutExpenseToCloud(gasto){
       monto:gasto.monto,
       cat:gasto.cat,
       catName:cat.name, catEmoji:cat.emoji, catColor:cat.color,
-      receipt:null,
+      receipt:gasto.receipt||null,
       createdAt:FB.serverTimestamp()
     });
     const g=(S.outGastos||[]).find(x=>x.id===gasto.id);
     if(g){ g.cloudId=ref.id; save(); }
-  }catch(e){ console.warn('sync out expense failed',e); }
+  }catch(e){ console.warn('sync out expense failed',e); throw e; }
 }
 
 // Update the employee's trip status on their employee doc
@@ -869,7 +925,7 @@ async function syncTripStatus(){
       tripStart:S.tripStart||null,
       currentTripId:S.currentTripId||null
     });
-  }catch(e){ console.warn('sync trip status failed',e); }
+  }catch(e){ console.warn('sync trip status failed',e); throw e; }
 }
 
 // Create the trip metadata doc in the cloud (trips subcollection) when a trip starts.
@@ -888,7 +944,7 @@ async function createTripDoc(tripId){
       startedAt:FB.serverTimestamp(),
       note:''
     },{merge:true});
-  }catch(e){ console.warn('create trip doc failed',e); }
+  }catch(e){ console.warn('create trip doc failed',e); throw e; }
 }
 
 // Read back this trip's expenses from the cloud (source of truth) and map them to
@@ -1019,7 +1075,7 @@ async function closeTripDoc(tripId,spent,leftover,initial){
     // para que el historial recuperado con Sincronizar muestre el monto correcto.
     if(typeof initial==='number'&&initial>0) payload.assignedAmount=Math.round(initial*100)/100;
     await FB.setDoc(FB.doc(FB.db,'companies',S.companyId,'trips',tripId),payload,{merge:true});
-  }catch(e){ console.warn('close trip doc failed',e); }
+  }catch(e){ console.warn('close trip doc failed',e); throw e; }
 }
 
 // Write the leftover balance from the just-finished trip to the cloud,
@@ -1032,7 +1088,7 @@ async function syncLeftover(amount){
     await FB.updateDoc(FB.doc(FB.db,'companies',S.companyId,'employees',S.employeeId),{
       lastLeftover: Math.max(0, Math.round(amount*100)/100)
     });
-  }catch(e){ console.warn('sync leftover failed',e); }
+  }catch(e){ console.warn('sync leftover failed',e); throw e; }
 }
 
 // ════════════════════════════════════════
@@ -1569,6 +1625,20 @@ let currentScreen='gastos';
 let cardReceiptB64=null;
 let activeCardCat=null;
 let cardExpensesCache=[];
+let outReceiptB64=null;
+function triggerOutReceipt(){ const i=document.getElementById('out-receipt-input'); if(i) i.click(); }
+function handleOutReceipt(event){
+  const f=event.target.files&&event.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=async (e)=>{
+    const b64=await compressImage(e.target.result,1300,0.8);
+    outReceiptB64=b64;
+    const m=document.getElementById('out-receipt-mini'); if(m) m.style.display='flex';
+    ocrScan(b64,'out');
+  };
+  r.readAsDataURL(f);
+}
+
 function triggerCardReceipt(){ const i=document.getElementById('card-receipt-input'); if(i) i.click(); }
 function handleCardReceipt(event){
   const f=event.target.files&&event.target.files[0]; if(!f) return;
@@ -1693,6 +1763,7 @@ function render(){
 
 function renderHeader(){
   document.getElementById('hdr-company').textContent=S.company||'—';
+  setSyncState(syncState);
   document.getElementById('hdr-employee').textContent=S.employee||'—';
   const lbl=document.getElementById('hdr-trip-label');
   if(S.tripActive){
@@ -1775,7 +1846,7 @@ function renderForm(){
     nt.style.padding='16px';
     nt.innerHTML=`
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
-        <span style="font-size:20px">👛</span>
+        <span style="font-size:20px">💵</span>
         <div style="font-size:15px;font-weight:800">${lang==='es'?'Gasto fuera de viaje':'Out-of-trip expense'}</div>
       </div>
       <div style="font-size:12.5px;color:var(--dim);margin-bottom:12px">${lang==='es'?'Se descuenta de tu saldo personal':'Deducted from your personal balance'} <b style="color:var(--green)">$${(S.wallet||0).toFixed(2)}</b></div>
@@ -1785,6 +1856,10 @@ function renderForm(){
       </div>
       <div class="btn-row" style="align-items:center">
         <div class="input-prefix" style="flex:1"><span class="pfx">$</span><input class="input" id="out-monto" type="number" min="0.01" step="0.01" placeholder="0.00" autocomplete="off"></div>
+        <button class="btn btn-ghost btn-sm" id="out-receipt-btn" onclick="triggerOutReceipt()" style="font-size:18px;padding:9px 12px;position:relative">📷
+          <div id="out-receipt-mini" style="display:none;position:absolute;top:-6px;right:-4px;width:16px;height:16px;background:var(--green);border-radius:50%;font-size:9px;align-items:center;justify-content:center;color:#000;font-weight:800">✓</div>
+        </button>
+        <input type="file" accept="image/*" id="out-receipt-input" class="photo-input" onchange="handleOutReceipt(event)">
         <button class="btn btn-rhino btn-sm" onclick="addOutGasto()">${lang==='es'?'Agregar':'Add'}</button>
       </div>
       <div style="font-size:12px;color:var(--red);margin-top:6px;display:none" id="out-err"></div>`;
@@ -1828,13 +1903,16 @@ function addOutGasto(){
   if(monto>(S.wallet||0)+0.001){ showErr((lang==='es'?'Saldo insuficiente. Disponible: ':'Insufficient balance. Available: ')+'$'+(S.wallet||0).toFixed(2)); return; }
   const g={
     id:Date.now(), desc, monto:Math.round(monto*100)/100, cat:activeOutCat||'otro', outOfTrip:true,
+    receipt: outReceiptB64||null,
     fecha:new Date().toLocaleString(lang==='es'?'es-US':'en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
   };
   S.outGastos.unshift(g);
   S.wallet=Math.round(((S.wallet||0)-g.monto)*100)/100;
   activeOutCat=null;
+  outReceiptB64=null;
+  const orm=document.getElementById('out-receipt-mini'); if(orm) orm.style.display='none';
   save(); render();
-  if(S.linked){ syncOutExpenseToCloud(g); syncWallet(); }
+  if(S.linked){ runSyncOp(()=>syncOutExpenseToCloud(g)); runSyncOp(()=>syncWallet()); }
 }
 
 function renderCatChips(){
@@ -1913,7 +1991,7 @@ function addGasto(){
   document.getElementById('inp-monto').value='';
   render();
   // Sync to supervisor in real time
-  if(S.linked) syncExpenseToCloud(nuevoGasto);
+  if(S.linked) runSyncOp(()=>syncExpenseToCloud(nuevoGasto));
 }
 function showFormErr(msg){
   const el=document.getElementById('form-err');
@@ -1991,14 +2069,15 @@ async function ocrScan(b64,target){
       toast(es?'No se detectó el total — ingrésalo manualmente':'Could not detect the total — enter it manually');
       return;
     }
-    const montoEl=document.getElementById(target==='card'?'card-monto':'inp-monto');
-    const descEl=document.getElementById(target==='card'?'card-desc':'inp-desc');
+    const montoEl=document.getElementById(target==='card'?'card-monto':(target==='out'?'out-monto':'inp-monto'));
+    const descEl=document.getElementById(target==='card'?'card-desc':(target==='out'?'out-desc':'inp-desc'));
     // Solo llenar campos vacíos: nunca pisar lo que el empleado ya escribió
     if(data.amount!=null && montoEl && !(parseFloat(montoEl.value)>0)) montoEl.value=data.amount.toFixed(2);
     if(data.merchant && descEl && !descEl.value.trim()) descEl.value=data.merchant;
     const catGuess=guessCategory((data.merchant||''));
     if(catGuess && S.categories.some(c=>c.id===catGuess)){
       if(target==='card'){ if(typeof activeCardCat!=='undefined'){ activeCardCat=catGuess; if(typeof renderCardCatChips==='function') renderCardCatChips(); } }
+      else if(target==='out'){ activeOutCat=catGuess; if(typeof renderOutCatChips==='function') renderOutCatChips(); }
       else { activeCat=catGuess; if(typeof renderCatChips==='function') renderCatChips(); }
     }
     const bits=[];
@@ -2128,7 +2207,7 @@ function startTrip(){
   S.gastos=[];
   S.tripEnd=null;
   save();closeModal();render();
-  if(S.linked){ syncTripStatus(); createTripDoc(S.currentTripId); }
+  if(S.linked){ runSyncOp(()=>syncTripStatus()); runSyncOp(()=>createTripDoc(S.currentTripId)); }
 }
 
 // Move the accumulated out-of-trip expenses into history as a closed personal-spending record,
@@ -2178,7 +2257,7 @@ function endTrip(){
   S.tripActive=false;S.tripStart=null;S.tripEnd=null;S.gastos=[];S.currentTripId=null;
   S.initialBalance=0;   // no active budget until a new trip is started
   save();render();
-  if(S.linked){ syncTripStatus(); syncLeftover(leftover); syncWallet(); if(endedTripId) closeTripDoc(endedTripId,totalSpent,leftover,endedInitial); }
+  if(S.linked){ runSyncOp(()=>syncTripStatus()); runSyncOp(()=>syncLeftover(leftover)); runSyncOp(()=>syncWallet()); if(endedTripId) runSyncOp(()=>closeTripDoc(endedTripId,totalSpent,leftover,endedInitial)); }
   // Ask about new trip
   setTimeout(()=>showNewTripModal(),600);
 }
@@ -2268,7 +2347,7 @@ function renderHistory(){
         <div>
           <div class="trip-card-company">${esc(trip.company)}</div>
           <div class="trip-card-emp">${esc(trip.employee)}</div>
-          <div class="trip-card-dates">👛 ${lang==='es'?'Gastos fuera de viaje':'Out-of-trip expenses'} · ${trip.archivedAt||trip.periodEnd||'—'}</div>
+          <div class="trip-card-dates">💵 ${lang==='es'?'Gastos fuera de viaje':'Out-of-trip expenses'} · ${trip.archivedAt||trip.periodEnd||'—'}</div>
         </div>
         <div class="badge" style="background:rgba(212,165,74,.15);color:var(--rhino)">${lang==='es'?'Personal':'Personal'}</div>
       </div>
@@ -2465,7 +2544,7 @@ async function syncEmployeeInfo(){
       phone:S.empPhone||'', email:S.empEmail||'',
       homeAddress:S.empHomeAddress||'', emergencyContact:S.empEmergency||''
     });
-  }catch(e){ console.warn('sync employee info failed',e); }
+  }catch(e){ console.warn('sync employee info failed',e); throw e; }
 }
 
 function renderCatManager(){
