@@ -1529,6 +1529,26 @@ function syncLangBtns(){
   if(!S) S=newState();
   lang=S.lang||'es';
   syncLangBtns();
+  // ?code=XXX — permite abrir la app ya vinculada (lo usa "Abrir mis gastos"
+  // del panel de supervisor, para que el supervisor no tenga que teclear su código).
+  let urlCode=null;
+  try{ urlCode=(new URLSearchParams(location.search).get('code')||'').trim().toUpperCase()||null; }catch(e){}
+  if(urlCode){
+    if(S.linked && S.employeeCode===urlCode){
+      // ya vinculado con ese mismo código: nada que hacer
+    } else if(S.linked){
+      // vinculado con OTRO código: no cambiamos nada sin permiso del usuario
+      setTimeout(()=>toast(lang==='es'
+        ?'Esta app ya está vinculada a otro código. Ve a Config → Desvincular para cambiar.'
+        :'This app is already linked to another code. Go to Settings → Unlink to switch.'),800);
+    } else {
+      // sin vincular: llenar y vincular solo
+      setTimeout(()=>{
+        const inp=document.getElementById('setup-code');
+        if(inp){ inp.value=urlCode; if(typeof linkCodeFromSetup==='function') linkCodeFromSetup(); }
+      },400);
+    }
+  }
   if(!S.configured){
     document.getElementById('setup-screen').style.display='flex';
     applyTranslationsSetup();

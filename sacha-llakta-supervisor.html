@@ -445,11 +445,16 @@ function currentPlan(){
 function planMaxEmployees(){
   return currentPlan().maxEmployees;
 }
+// Empleados que SÍ consumen cupo del plan. Las tarjetas propias de los
+// supervisores ("Mi viaje") no cuentan: el supervisor ya paga la cuenta.
+function billableEmployees(){
+  return employees.filter(e=>!e.isSupervisorSelf);
+}
 // Can the supervisor add another employee under their current plan?
 function canAddEmployee(){
   const max=planMaxEmployees();
   if(max===Infinity) return {ok:true};
-  if(employees.length>=max) return {ok:false, reason:'limit', max};
+  if(billableEmployees().length>=max) return {ok:false, reason:'limit', max};
   return {ok:true};
 }
 
@@ -1121,7 +1126,7 @@ function subscribeExpenses(){
 
 // ═══ STATS ═══
 function updateStats(){
-  document.getElementById('st-emp-count').textContent=employees.length;
+  document.getElementById('st-emp-count').textContent=billableEmployees().length;
   const activeTrips=employees.filter(e=>e.tripActive).length;
   document.getElementById('st-active-trips').textContent=activeTrips;
   const today=new Date();today.setHours(0,0,0,0);
@@ -1269,14 +1274,81 @@ function renderFeed(){
   }).join('');
 }
 
-// ═══ RENDER EMPLOYEES ═══
+// ═══ MI VIAJE (tarjeta propia del supervisor) ═══
+// Cada supervisor —dueño o invitado— puede llevar sus propios viáticos.
+// Se guarda como un empleado normal marcado con isSupervisorSelf, así reutiliza
+// gastos, recibos, OCR, viajes y reportes sin duplicar nada. No consume cupo.
+function myUid(){ return (typeof currentUser!=='undefined'&&currentUser)?currentUser.uid:null; }
+function mySelfEmployee(){
+  const uid=myUid(); if(!uid) return null;
+  return employees.find(e=>e.isSupervisorSelf && e.supervisorUid===uid)||null;
+}
+async function activateMyTrip(){
+  const es=lang==='es';
+  const uid=myUid();
+  if(!uid||!companyId){ showToast(es?'Sesión no lista.':'Session not ready.'); return; }
+  if(mySelfEmployee()){ showToast(es?'Ya tienes tu tarjeta de viaje.':'You already have your trip card.'); return; }
+  try{
+    const code=generateCode(companyData.company, myName||'SUP');
+    const empId='self_'+uid;
+    await FB.setDoc(FB.doc(FB.db,'companies',companyId,'employees',empId),{
+      name: myName||(currentUser&&currentUser.email)||'Supervisor',
+      role: 'Supervisor',
+      code,
+      isSupervisorSelf:true,
+      supervisorUid:uid,
+      assignedAmount:0, tripActive:false, walletBalance:0,
+      createdAt:FB.serverTimestamp()
+    });
+    await FB.setDoc(FB.doc(FB.db,'codes',code),{
+      companyId, companyName:companyData.company,
+      employeeName:myName||'Supervisor', employeeId:empId,
+      assignedAmount:0
+    });
+    showToast(es?'✓ Tu tarjeta de viaje está lista':'✓ Your trip card is ready');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+// Abre la app de gastos ya vinculada con el código propio del supervisor.
+function openMyExpenses(){
+  const me=mySelfEmployee();
+  const es=lang==='es';
+  if(!me||!me.code){ showToast(es?'Primero activa tu tarjeta de viaje.':'Activate your trip card first.'); return; }
+  window.open('sacha-llakta-empleado.html?code='+encodeURIComponent(me.code),'_blank');
+}
 function renderEmployees(){
   const el=document.getElementById('employees-list');
-  if(!employees.length){
-    el.innerHTML='<div class="empty"><div class="empty-icon">👥</div><div class="empty-title">'+(lang==='es'?'Sin empleados aún':'No employees yet')+'</div><div class="empty-sub">'+(lang==='es'?'Agrega tu primer empleado para generar su código de acceso.':'Add your first employee to generate their access code.')+'</div></div>';
+  const uid=myUid();
+  const es=lang==='es';
+  // Visibilidad: los empleados normales los ve todo supervisor. Las tarjetas
+  // propias de supervisores solo las ve su dueño... y el dueño de la empresa,
+  // que sí debe controlar en qué se gastan los viáticos de la compañía.
+  const visible=employees.filter(e=>{
+    if(!e.isSupervisorSelf) return true;
+    if(e.supervisorUid===uid) return true;
+    return myRole==='owner';
+  });
+  // Mi propia tarjeta siempre primero.
+  visible.sort((a,b)=>{
+    const am=(a.isSupervisorSelf&&a.supervisorUid===uid)?0:1;
+    const bm=(b.isSupervisorSelf&&b.supervisorUid===uid)?0:1;
+    if(am!==bm) return am-bm;
+    return (a.name||'').localeCompare(b.name||'');
+  });
+  // Si aún no tengo tarjeta propia, ofrecer activarla.
+  const selfBanner = mySelfEmployee() ? '' : `
+    <div class="emp-card" style="border-color:rgba(227,169,74,.35);background:rgba(227,169,74,.06)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">🧳 ${es?'¿Vas a viajar tú también?':'Traveling yourself?'}</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:10px">
+        ${es?'Activa tu propia tarjeta de viáticos para registrar tus gastos con recibos y escáner, igual que un empleado. <b style="color:var(--green)">No consume cupo de tu plan.</b>'
+            :'Activate your own per-diem card to log expenses with receipts and scanning, just like an employee. <b style="color:var(--green)">It does not use a plan slot.</b>'}
+      </div>
+      <button class="btn btn-rhino btn-sm" onclick="activateMyTrip()">${es?'Activar mi tarjeta de viaje':'Activate my trip card'}</button>
+    </div>`;
+  if(!visible.length){
+    el.innerHTML=selfBanner+'<div class="empty"><div class="empty-icon">👥</div><div class="empty-title">'+(es?'Sin empleados aún':'No employees yet')+'</div><div class="empty-sub">'+(es?'Agrega tu primer empleado para generar su código de acceso.':'Add your first employee to generate their access code.')+'</div></div>';
     return;
   }
-  el.innerHTML=employees.map(emp=>{
+  el.innerHTML=selfBanner+visible.map(emp=>{
     // Show ONLY the relevant trip's expenses (by tripId). While the trip is active
     // we use currentTripId; once finished we keep showing that same ended trip via
     // lastTripId. We NEVER sum all-history — that made finished trips double-count
@@ -1322,10 +1394,14 @@ function renderEmployees(){
         ✏️ ${lang==='es'?'Último ajuste de saldo':'Last balance adjustment'} · <span style="color:var(--muted)">${adj.by==='employee'?(lang==='es'?'por el empleado':'by the employee'):(lang==='es'?'por el supervisor':'by the supervisor')}</span><br>
         <b>$${(adj.old||0).toFixed(2)} → $${(adj.new||0).toFixed(2)}</b> · <span style="color:var(--muted)">"${esc(adj.reason||'')}"</span>
       </div>` : '';
-    return `<div class="emp-card">
+    const isMine=!!(emp.isSupervisorSelf && emp.supervisorUid===myUid());
+    const selfBadge = emp.isSupervisorSelf
+      ? `<span style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 7px;border-radius:6px;background:rgba(227,169,74,.15);border:1px solid rgba(227,169,74,.4);color:var(--yellow);margin-left:6px;vertical-align:middle">${isMine?(lang==='es'?'MI VIAJE':'MY TRIP'):(lang==='es'?'SUPERVISOR':'SUPERVISOR')}</span>`
+      : '';
+    return `<div class="emp-card"${isMine?' style="border-color:rgba(227,169,74,.4)"':''}>
       <div class="emp-card-head">
         <div>
-          <div class="emp-name">${esc(emp.name)} <button onclick="editEmployeeName('${emp.id}')" style="background:none;border:none;cursor:pointer;font-size:12px;opacity:.6;padding:2px 4px" title="${lang==='es'?'Editar nombre':'Edit name'}">✏️</button></div>
+          <div class="emp-name">${esc(emp.name)}${selfBadge} <button onclick="editEmployeeName('${emp.id}')" style="background:none;border:none;cursor:pointer;font-size:12px;opacity:.6;padding:2px 4px" title="${lang==='es'?'Editar nombre':'Edit name'}">✏️</button></div>
           <div class="emp-role">${esc(emp.role||(lang==='es'?'Técnico de campo':'Field technician'))}</div>
         </div>
         ${emp.tripActive?`<span class="badge badge-active-trip">● ${lang==='es'?'En viaje':'On trip'}</span>`:`<span class="badge badge-gray">${lang==='es'?'Inactivo':'Idle'}</span>`}
@@ -1334,6 +1410,7 @@ function renderEmployees(){
         <span class="emp-code">${esc(emp.code)}</span>
         <button class="copy-btn" onclick="copyCode('${esc(emp.code)}')">${lang==='es'?'Copiar':'Copy'}</button>
       </div>
+      ${isMine?`<button class="btn btn-rhino btn-sm" onclick="openMyExpenses()" style="width:100%;margin-bottom:10px">🧳 ${lang==='es'?'Abrir mis gastos':'Open my expenses'}</button>`:''}
       <div class="emp-money-row">
         <div class="emp-money-item">
           <div class="emp-money-k">${lang==='es'?'Viáticos':'Per-diem'}</div>
@@ -2347,7 +2424,7 @@ function renderAccount(){
   const es=lang==='es';
   const admin=isAdminUser();
   const owner=(myRole==='owner');
-  const empCount=employees.length;
+  const empCount=billableEmployees().length;
   const expCount=allExpenses.length;
   const max=ti.maxEmployees===Infinity?(es?'ilimitado':'unlimited'):ti.maxEmployees;
 
@@ -3555,6 +3632,7 @@ async function doEditEmployeeName(id){
 
 window.editExpenseAmount=editExpenseAmount;window.doEditExpenseAmount=doEditExpenseAmount;
 window.forceSync=forceSync;window.applyScannedAmount=applyScannedAmount;window.supervisorOcr=supervisorOcr;
+window.activateMyTrip=activateMyTrip;window.openMyExpenses=openMyExpenses;window.mySelfEmployee=mySelfEmployee;
 window.editEmployeeName=editEmployeeName;window.doEditEmployeeName=doEditEmployeeName;
 window.openBillingPortal=openBillingPortal;
 window.supAdjustWallet=supAdjustWallet;window.doSupAdjustWallet=doSupAdjustWallet;
