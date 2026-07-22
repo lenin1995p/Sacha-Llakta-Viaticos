@@ -1315,6 +1315,59 @@ function openMyExpenses(){
   if(!me||!me.code){ showToast(es?'Primero activa tu tarjeta de viaje.':'Activate your trip card first.'); return; }
   window.open('sacha-llakta-empleado.html?code='+encodeURIComponent(me.code),'_blank');
 }
+
+// Convierte una tarjeta de empleado YA EXISTENTE en la tarjeta propia del
+// supervisor. Se conserva absolutamente todo —código, gastos, viajes, saldo,
+// historial— y además deja de consumir cupo del plan.
+function claimAsMine(id){
+  const emp=employees.find(e=>e.id===id); if(!emp) return;
+  const es=lang==='es';
+  showModal(`
+    <div class="modal-icon">🧳</div>
+    <div class="modal-title">${es?'¿Esta tarjeta es tuya?':'Is this card yours?'}</div>
+    <div class="modal-body">${es?'Se marcará':'This will mark'} <b style="color:var(--text)">${esc(emp.name)}</b> ${es?'como tu tarjeta de viaje.':'as your trip card.'}<br><br>
+      ${es?'Se conserva todo: su código, sus gastos, su historial y su saldo. Además deja de consumir un cupo de tu plan.'
+          :'Everything is kept: code, expenses, history and balance. It also stops using a plan slot.'}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-green" onclick="doClaimAsMine('${id}')">${es?'Sí, es mía':'Yes, it is mine'}</button>
+    </div>`);
+}
+async function doClaimAsMine(id){
+  const uid=myUid(); const es=lang==='es';
+  if(!uid){ showToast(es?'Sesión no lista.':'Session not ready.'); return; }
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
+      isSupervisorSelf:true, supervisorUid:uid
+    });
+    closeModal();
+    showToast(es?'✓ Ahora es tu tarjeta de viaje':'✓ Now it is your trip card');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+// Deshacer: vuelve a ser un empleado normal (y vuelve a consumir cupo).
+function unclaimMine(id){
+  const es=lang==='es';
+  showModal(`
+    <div class="modal-icon">↩️</div>
+    <div class="modal-title">${es?'¿Volver a empleado normal?':'Back to regular employee?'}</div>
+    <div class="modal-body">${es?'Dejará de ser tu tarjeta de viaje y volverá a contar como empleado de tu plan. No se pierde ningún dato.'
+                                :'It will stop being your trip card and will count as an employee again. No data is lost.'}</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
+      <button class="btn btn-rhino" onclick="doUnclaimMine('${id}')">${es?'Confirmar':'Confirm'}</button>
+    </div>`);
+}
+async function doUnclaimMine(id){
+  const es=lang==='es';
+  try{
+    await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
+      isSupervisorSelf:false, supervisorUid:null
+    });
+    closeModal();
+    showToast(es?'✓ Volvió a ser empleado normal':'✓ Back to regular employee');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
 function renderEmployees(){
   const el=document.getElementById('employees-list');
   const uid=myUid();
@@ -1339,10 +1392,10 @@ function renderEmployees(){
     <div class="emp-card" style="border-color:rgba(227,169,74,.35);background:rgba(227,169,74,.06)">
       <div style="font-size:14px;font-weight:700;margin-bottom:4px">🧳 ${es?'¿Vas a viajar tú también?':'Traveling yourself?'}</div>
       <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:10px">
-        ${es?'Activa tu propia tarjeta de viáticos para registrar tus gastos con recibos y escáner, igual que un empleado. <b style="color:var(--green)">No consume cupo de tu plan.</b>'
-            :'Activate your own per-diem card to log expenses with receipts and scanning, just like an employee. <b style="color:var(--green)">It does not use a plan slot.</b>'}
+        ${es?'Activa tu propia tarjeta de viáticos para registrar tus gastos con recibos y escáner, igual que un empleado. <b style="color:var(--green)">No consume cupo de tu plan.</b><br><br>¿Ya tienes una tarjeta de empleado tuya en la lista? Usa <b>“Esta tarjeta es mía”</b> en ella — así conservas todos tus gastos e historial.'
+            :'Activate your own per-diem card to log expenses with receipts and scanning, just like an employee. <b style="color:var(--green)">It does not use a plan slot.</b><br><br>Already have your own employee card in the list? Use <b>“This card is mine”</b> on it — that keeps all your expenses and history.'}
       </div>
-      <button class="btn btn-rhino btn-sm" onclick="activateMyTrip()">${es?'Activar mi tarjeta de viaje':'Activate my trip card'}</button>
+      <button class="btn btn-rhino btn-sm" onclick="activateMyTrip()">${es?'Crear tarjeta nueva':'Create a new card'}</button>
     </div>`;
   if(!visible.length){
     el.innerHTML=selfBanner+'<div class="empty"><div class="empty-icon">👥</div><div class="empty-title">'+(es?'Sin empleados aún':'No employees yet')+'</div><div class="empty-sub">'+(es?'Agrega tu primer empleado para generar su código de acceso.':'Add your first employee to generate their access code.')+'</div></div>';
@@ -1410,7 +1463,11 @@ function renderEmployees(){
         <span class="emp-code">${esc(emp.code)}</span>
         <button class="copy-btn" onclick="copyCode('${esc(emp.code)}')">${lang==='es'?'Copiar':'Copy'}</button>
       </div>
-      ${isMine?`<button class="btn btn-rhino btn-sm" onclick="openMyExpenses()" style="width:100%;margin-bottom:10px">🧳 ${lang==='es'?'Abrir mis gastos':'Open my expenses'}</button>`:''}
+      ${isMine?`<div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-rhino btn-sm" onclick="openMyExpenses()" style="flex:1">🧳 ${lang==='es'?'Abrir mis gastos':'Open my expenses'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="unclaimMine('${emp.id}')" title="${lang==='es'?'Volver a empleado normal':'Back to regular employee'}">↩️</button>
+      </div>`:''}
+      ${(!emp.isSupervisorSelf && !mySelfEmployee())?`<button class="btn btn-ghost btn-sm" onclick="claimAsMine('${emp.id}')" style="width:100%;margin-bottom:10px;color:var(--yellow);border-color:rgba(227,169,74,.35)">🧳 ${lang==='es'?'Esta tarjeta es mía':'This card is mine'}</button>`:''}
       <div class="emp-money-row">
         <div class="emp-money-item">
           <div class="emp-money-k">${lang==='es'?'Viáticos':'Per-diem'}</div>
@@ -3633,6 +3690,7 @@ async function doEditEmployeeName(id){
 window.editExpenseAmount=editExpenseAmount;window.doEditExpenseAmount=doEditExpenseAmount;
 window.forceSync=forceSync;window.applyScannedAmount=applyScannedAmount;window.supervisorOcr=supervisorOcr;
 window.activateMyTrip=activateMyTrip;window.openMyExpenses=openMyExpenses;window.mySelfEmployee=mySelfEmployee;
+window.claimAsMine=claimAsMine;window.doClaimAsMine=doClaimAsMine;window.unclaimMine=unclaimMine;window.doUnclaimMine=doUnclaimMine;
 window.editEmployeeName=editEmployeeName;window.doEditEmployeeName=doEditEmployeeName;
 window.openBillingPortal=openBillingPortal;
 window.supAdjustWallet=supAdjustWallet;window.doSupAdjustWallet=doSupAdjustWallet;
