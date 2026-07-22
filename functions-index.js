@@ -199,75 +199,120 @@ const OCR_MAX_B64 = 1.8 * 1024 * 1024; // ~1.8 MB de base64
 
 // ── Interpretación del texto del recibo ──────────────────────────────
 function parseMoney(str) {
-  // Acepta 1,234.56 / 1.234,56 / 45.67 / 45,67 -> número JS
   let s = String(str).replace(/[^\d.,]/g, "");
   if (!s) return null;
   const lastDot = s.lastIndexOf("."), lastCom = s.lastIndexOf(",");
   if (lastDot >= 0 && lastCom >= 0) {
-    // El separador decimal es el que aparece más a la derecha
     if (lastDot > lastCom) s = s.replace(/,/g, "");
     else s = s.replace(/\./g, "").replace(",", ".");
   } else if (lastCom >= 0) {
-    // Solo comas: si hay 2 decimales al final es decimal, si no, miles
     s = /,\d{2}$/.test(s) ? s.replace(",", ".") : s.replace(/,/g, "");
   }
   const n = parseFloat(s);
   return isNaN(n) ? null : Math.round(n * 100) / 100;
 }
 
+// Marcas conocidas -> nombre limpio. Se busca en TODO el texto del recibo,
+// porque muchos recibos entierran el nombre real bajo texto de relleno.
+const BRANDS = [
+  [/mc\s?donald'?s?/i, "McDonald's"], [/\bwal[\s-]?mart\b/i, "Walmart"],
+  [/\btarget\b/i, "Target"], [/\bcostco\b/i, "Costco"], [/sam'?s club/i, "Sam's Club"],
+  [/\bkroger\b/i, "Kroger"], [/\bdillons\b/i, "Dillons"], [/\baldi\b/i, "Aldi"],
+  [/quik\s?trip|\bqt\s?#/i, "QuikTrip"], [/casey'?s/i, "Casey's"], [/kwik\s?shop/i, "Kwik Shop"],
+  [/love'?s\s+(travel|country)/i, "Love's"], [/\bpilot\s+(travel|flying)/i, "Pilot"],
+  [/flying\s+j/i, "Flying J"], [/\bshell\b/i, "Shell"], [/\bexxon/i, "Exxon"],
+  [/\bchevron\b/i, "Chevron"], [/phillips\s*66/i, "Phillips 66"], [/\bconoco\b/i, "Conoco"],
+  [/\bsinclair\b/i, "Sinclair"], [/\bvalero\b/i, "Valero"], [/circle\s?k/i, "Circle K"],
+  [/murphy\s?(usa|express)/i, "Murphy USA"], [/\bsubway\b/i, "Subway"],
+  [/burger\s?king/i, "Burger King"], [/wendy'?s/i, "Wendy's"], [/taco\s?bell/i, "Taco Bell"],
+  [/\bkfc\b|kentucky fried/i, "KFC"], [/popeyes/i, "Popeyes"], [/chick[\s-]?fil[\s-]?a/i, "Chick-fil-A"],
+  [/chipotle/i, "Chipotle"], [/panda\s?express/i, "Panda Express"], [/\bsonic\b/i, "Sonic"],
+  [/braum'?s/i, "Braum's"], [/applebee'?s/i, "Applebee's"], [/chili'?s/i, "Chili's"],
+  [/\bihop\b/i, "IHOP"], [/denny'?s/i, "Denny's"], [/cracker\s?barrel/i, "Cracker Barrel"],
+  [/olive\s?garden/i, "Olive Garden"], [/buffalo\s?wild\s?wings/i, "Buffalo Wild Wings"],
+  [/pizza\s?hut/i, "Pizza Hut"], [/domino'?s/i, "Domino's"], [/papa\s?john'?s/i, "Papa John's"],
+  [/starbucks/i, "Starbucks"], [/dunkin/i, "Dunkin'"], [/jimmy\s?john'?s/i, "Jimmy John's"],
+  [/\bhardee'?s/i, "Hardee's"], [/\barby'?s/i, "Arby's"], [/whataburger/i, "Whataburger"],
+  [/freddy'?s/i, "Freddy's"], [/spangles/i, "Spangles"],
+  [/home\s?depot/i, "Home Depot"], [/lowe'?s/i, "Lowe's"], [/harbor\s?freight/i, "Harbor Freight"],
+  [/menards/i, "Menards"], [/ace\s?hardware/i, "Ace Hardware"], [/tractor\s?supply/i, "Tractor Supply"],
+  [/o'?reilly/i, "O'Reilly"], [/autozone/i, "AutoZone"], [/\bnapa\b/i, "NAPA"],
+  [/grainger/i, "Grainger"], [/fastenal/i, "Fastenal"], [/northern\s?tool/i, "Northern Tool"],
+  [/hampton\s?inn/i, "Hampton Inn"], [/holiday\s?inn/i, "Holiday Inn"], [/best\s?western/i, "Best Western"],
+  [/la\s?quinta/i, "La Quinta"], [/comfort\s?(inn|suites)/i, "Comfort Inn"], [/days\s?inn/i, "Days Inn"],
+  [/super\s?8/i, "Super 8"], [/motel\s?6/i, "Motel 6"], [/marriott/i, "Marriott"],
+  [/hilton/i, "Hilton"], [/fairfield\s?inn/i, "Fairfield Inn"], [/\bwyndham\b/i, "Wyndham"],
+  [/\buber\b/i, "Uber"], [/\blyft\b/i, "Lyft"], [/\bhertz\b/i, "Hertz"],
+  [/enterprise\s?rent/i, "Enterprise Rent-A-Car"], [/\bavis\b/i, "Avis"],
+  [/walgreens/i, "Walgreens"], [/\bcvs\b/i, "CVS"], [/dollar\s?general/i, "Dollar General"],
+  [/dollar\s?tree/i, "Dollar Tree"], [/family\s?dollar/i, "Family Dollar"],
+];
+
+// Líneas de relleno que NO son el nombre del comercio.
+const BOILER = /(locally owned|operated by|we welcome|comments|feedback|survey|thank\s?you|valued customer|welcome to|customer copy|merchant copy|come see us|sign up|rewards|points|visit us|follow us|store\s*#|reg\s*#|cashier|server\s*:|order\s*#|locator|receipt|invoice|factura|www\.|http|@|tel\s*[#:.]|phone|^\s*\d[\d\s.,#*\/-]*$)/i;
+
 function extractReceiptData(fullText) {
   const lines = fullText.split("\n").map(l => l.trim()).filter(Boolean);
   const moneyRe = /\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})(?!\d)/g;
 
-  // ── Monto total ──
-  // 1) Buscar líneas con palabras clave de total (excluyendo subtotal).
-  const totalKey = /(total\s*a\s*pagar|grand\s*total|amount\s*due|balance\s*due|total\s*due|importe\s*total|\btotal\b|monto\s*total)/i;
+  const totalKey = /(total\s*a\s*pagar|grand\s*total|amount\s*due|balance\s*due|total\s*due|importe\s*total|eat[\s-]?in\s*total|\btotal\b|monto\s*total)/i;
   const antiKey = /(sub\s*-?\s*total|subtotal|total\s*items|total\s*savings|total\s*discount|total\s*tax|total\s*qty|total\s*art)/i;
-  let candidates = [];
+
+  // Todos los montos con su línea, y cuántas veces aparece cada valor.
+  const all = [], freq = {};
   lines.forEach((line, i) => {
-    if (!totalKey.test(line) || antiKey.test(line)) return;
-    // El número puede estar en la misma línea o en la siguiente (formato de columnas)
-    const searchIn = [line, lines[i + 1] || ""];
-    for (const src of searchIn) {
-      let m; moneyRe.lastIndex = 0;
-      while ((m = moneyRe.exec(src)) !== null) {
-        const v = parseMoney(m[1]);
-        if (v !== null && v > 0 && v < 100000) candidates.push(v);
-      }
-      if (candidates.length) break; // preferir la misma línea
+    let m; moneyRe.lastIndex = 0;
+    while ((m = moneyRe.exec(line)) !== null) {
+      const v = parseMoney(m[1]);
+      if (v !== null && v > 0 && v < 100000) { all.push({ v, i }); freq[v] = (freq[v] || 0) + 1; }
     }
   });
-  // Con varias líneas "TOTAL", el total real suele ser el mayor
-  let amount = candidates.length ? Math.max(...candidates) : null;
 
-  // 2) Respaldo: el número con formato de dinero más grande de todo el recibo.
-  if (amount === null) {
-    let all = [];
+  let amount = null;
+
+  // 1) Etiqueta de total con número en la misma línea (recibos alineados).
+  const sameLine = [];
+  lines.forEach((line, i) => {
+    if (!totalKey.test(line) || antiKey.test(line)) return;
     let m; moneyRe.lastIndex = 0;
-    while ((m = moneyRe.exec(fullText)) !== null) {
+    while ((m = moneyRe.exec(line)) !== null) {
       const v = parseMoney(m[1]);
-      if (v !== null && v > 0 && v < 100000) all.push(v);
+      if (v !== null && v > 0 && v < 100000) sameLine.push(v);
     }
-    if (all.length) amount = Math.max(...all);
+  });
+  if (sameLine.length) amount = Math.max(...sameLine);
+
+  // 2) Sin número en la línea: el valor que MÁS SE REPITE suele ser el total
+  //    (aparece en Total, Pago, Tarjeta, Monto de transacción...).
+  if (amount === null && all.length) {
+    const maxFreq = Math.max(...Object.values(freq));
+    if (maxFreq >= 2) {
+      const repeated = Object.keys(freq).filter(k => freq[k] === maxFreq).map(Number);
+      amount = Math.max(...repeated);
+    } else {
+      amount = Math.max(...all.map(x => x.v));
+    }
   }
 
-  // ── Fecha ──
+  // Fecha
   let date = null;
-  const dateRe = /\b(\d{1,2}[\/\-.]\d{1,2}[\/\-.](?:\d{4}|\d{2}))\b|\b((?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b|\b(\d{1,2}\s+(?:de\s+)?(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+(?:de\s+)?\d{4})\b/i;
+  const dateRe = /\b(\d{1,2}[\/\-.]\d{1,2}[\/\-.](?:\d{4}|\d{2}))\b|\b((?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b/i;
   const dm = fullText.match(dateRe);
-  if (dm) date = (dm[1] || dm[2] || dm[3] || "").trim();
+  if (dm) date = (dm[1] || dm[2] || "").trim();
 
-  // ── Comercio ── (primera línea "de texto" del recibo)
+  // Comercio: 1) marca conocida en todo el texto  2) heurística sin relleno
   let merchant = null;
-  for (const line of lines.slice(0, 6)) {
-    const letters = (line.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g) || []).length;
-    if (letters < 3) continue;                    // líneas de números/códigos
-    if (/^\d/.test(line) && letters < 6) continue; // direcciones que inician en número
-    if (/(recibo|receipt|invoice|factura|tel[:.]|www\.|http|order\s*#|ticket)/i.test(line)) continue;
-    merchant = line.replace(/\s{2,}/g, " ").slice(0, 48);
-    break;
+  for (const [re, name] of BRANDS) { if (re.test(fullText)) { merchant = name; break; } }
+  if (!merchant) {
+    for (const line of lines.slice(0, 12)) {
+      const letters = (line.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g) || []).length;
+      if (letters < 3) continue;
+      if (BOILER.test(line)) continue;
+      if (/^\d/.test(line) && letters < 6) continue;
+      merchant = line.replace(/\s{2,}/g, " ").slice(0, 48);
+      break;
+    }
   }
-
   return { amount, date, merchant };
 }
 

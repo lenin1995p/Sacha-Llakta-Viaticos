@@ -2038,6 +2038,7 @@ function handleReceiptPhoto(event){
 
 // ═══ OCR DE RECIBOS (Cloud Vision vía Cloud Function) ═══
 const OCR_FN_URL='https://us-central1-sacha-llakta-viaticos.cloudfunctions.net/ocrReceipt';
+const lastOcrFill={}; // por destino: qué valores puso el último escaneo
 
 // Adivinar la categoría según el comercio / texto del recibo
 function guessCategory(merchant){
@@ -2047,7 +2048,7 @@ function guessCategory(merchant){
     ['hotel',/hotel|motel|\binn\b|suites|lodge|resort|marriott|hilton|hampton|holiday|wyndham|best western|comfort|quality inn|la quinta|super 8|days inn|airbnb/],
     ['comida',/restaurant|grill|cafe|caf\u00e9|coffee|pizza|burger|taco|subway|mcdonald|wendy|chick|kfc|popeyes|chipotle|panda|denny|ihop|applebee|chili|buffet|bbq|steak|donut|dunkin|starbucks|sonic|braum|deli|bakery|panader|taqueria|pollo|mariscos|sushi|wok|food/],
     ['peajes',/toll|peaje|turnpike|e-?zpass|pikepass/],
-    ['transporte',/uber|lyft|taxi|rental|rent-?a-?car|hertz|enterprise|avis|budget|parking|estacionamiento|airline|airport|amtrak|greyhound/],
+    ['transporte',/uber|lyft|taxi|rental|rent-?a-?car|hertz|enterprise\s?rent|avis|budget\s?(rent|car)|parking|estacionamiento|airline|airport|amtrak|greyhound/],
     ['herramientas',/home depot|lowe'?s|harbor freight|grainger|fastenal|ace hardware|tractor supply|northern tool|menards|tool|ferreter/],
   ];
   for(const [id,re] of rules){ if(re.test(s)) return id; }
@@ -2071,9 +2072,17 @@ async function ocrScan(b64,target){
     }
     const montoEl=document.getElementById(target==='card'?'card-monto':(target==='out'?'out-monto':'inp-monto'));
     const descEl=document.getElementById(target==='card'?'card-desc':(target==='out'?'out-desc':'inp-desc'));
-    // Solo llenar campos vacíos: nunca pisar lo que el empleado ya escribió
-    if(data.amount!=null && montoEl && !(parseFloat(montoEl.value)>0)) montoEl.value=data.amount.toFixed(2);
-    if(data.merchant && descEl && !descEl.value.trim()) descEl.value=data.merchant;
+    // Reemplaza si el campo está vacío O si lo que hay lo puso un escaneo anterior
+    // (así una segunda foto corrige a la primera), pero NUNCA pisa lo que escribiste tú.
+    const prev=lastOcrFill[target]||{};
+    const montoLibre=montoEl && (!(parseFloat(montoEl.value)>0) || montoEl.value===prev.monto);
+    const descLibre=descEl && (!descEl.value.trim() || descEl.value===prev.desc);
+    if(data.amount!=null && montoLibre){ montoEl.value=data.amount.toFixed(2); }
+    if(data.merchant && descLibre){ descEl.value=data.merchant; }
+    lastOcrFill[target]={
+      monto:(data.amount!=null&&montoLibre)?data.amount.toFixed(2):(prev.monto||null),
+      desc:(data.merchant&&descLibre)?data.merchant:(prev.desc||null)
+    };
     const catGuess=guessCategory((data.merchant||''));
     if(catGuess && S.categories.some(c=>c.id===catGuess)){
       if(target==='card'){ if(typeof activeCardCat!=='undefined'){ activeCardCat=catGuess; if(typeof renderCardCatChips==='function') renderCardCatChips(); } }
