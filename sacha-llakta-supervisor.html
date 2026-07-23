@@ -3022,27 +3022,37 @@ function adminDeleteCompany(cid){
   showModal(`
     <div class="modal-icon">🗑️</div>
     <div class="modal-title">${es?'¿Eliminar esta empresa?':'Delete this company?'}</div>
-    <div class="modal-body">${esc(c.company||'')}${c.supervisorEmail?' — '+esc(c.supervisorEmail):''}<br><br>${es?'Se borrará la empresa y todos sus datos (empleados, gastos, viajes). No se puede deshacer.':'The company and all its data (employees, expenses, trips) will be deleted. This cannot be undone.'}</div>
+    <div class="modal-body">${esc(c.company||'')}${c.supervisorEmail?' — '+esc(c.supervisorEmail):''}<br><br>${es?'Se borrará la empresa y todos sus datos (empleados, gastos, viajes, códigos). También se eliminarán las cuentas de acceso de sus supervisores, por lo que <b>sus correos quedarán libres</b> para registrarse de nuevo. No se puede deshacer.':'The company and all its data (employees, expenses, trips, codes) will be deleted. Its supervisors\' login accounts are removed too, so <b>their emails become available</b> again. This cannot be undone.'}</div>
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="closeModal()">${es?'Cancelar':'Cancel'}</button>
       <button class="btn btn-ghost" style="color:var(--red)" onclick="adminDoDeleteCompany('${cid}')">${es?'Sí, eliminar':'Yes, delete'}</button>
     </div>`);
 }
 
+const DELETE_COMPANY_FN_URL='https://us-central1-sacha-llakta-viaticos.cloudfunctions.net/adminDeleteCompany';
+
+// El borrado se hace en el servidor: desde el navegador no se pueden eliminar
+// cuentas de Firebase Auth, y sin eso el correo del supervisor quedaba ocupado
+// para siempre. La función también limpia códigos y vínculos huérfanos.
 async function adminDoDeleteCompany(cid){
   const es=lang==='es';
-  const c=adminCompanies.find(x=>x.id===cid);
   try{
-    for(const sub of ['employees','expenses','trips']){
-      const qs=await FB.getDocs(FB.collection(FB.db,'companies',cid,sub));
-      for(const d of qs.docs){ try{ await FB.deleteDoc(d.ref); }catch(e){} }
-    }
-    if(c&&c.companyCode){ try{ await FB.deleteDoc(FB.doc(FB.db,'companyCodes',c.companyCode)); }catch(e){} }
-    await FB.deleteDoc(FB.doc(FB.db,'companies',cid));
+    showToast(es?'Eliminando…':'Deleting…');
+    const user=FB.auth&&FB.auth.currentUser;
+    if(!user) throw new Error(es?'Sesión no válida':'Invalid session');
+    const token=await user.getIdToken();
+    const resp=await fetch(DELETE_COMPANY_FN_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body:JSON.stringify({companyId:cid})
+    });
+    const data=await resp.json().catch(()=>({}));
+    if(!resp.ok) throw new Error(data.error||('HTTP '+resp.status));
     adminCompanies=adminCompanies.filter(x=>x.id!==cid);
     closeModal();
     renderAdminList();
-    showToast(es?'✓ Empresa eliminada':'✓ Company deleted');
+    const freed=(data.authDeleted&&data.authDeleted.length)?(' · '+(es?'correo liberado':'email freed')):'';
+    showToast((es?'✓ Empresa eliminada por completo':'✓ Company fully deleted')+freed);
   }catch(e){ showToast('Error: '+e.message); }
 }
 

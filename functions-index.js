@@ -529,3 +529,138 @@ exports.sendWelcomeEmail = onDocumentCreated(
     }
   }
 );
+
+/**
+ * ═══════════════════════════════════════════════════════════════════
+ * ELIMINAR EMPRESA POR COMPLETO (solo superadmin)
+ * ═══════════════════════════════════════════════════════════════════
+ * El panel de superadmin no puede borrar cuentas de Firebase Auth desde el
+ * navegador (solo el Admin SDK puede). Por eso, al borrar una empresa desde
+ * la app quedaba viva la cuenta del supervisor y su correo seguía "en uso".
+ * Esta función hace la limpieza completa:
+ *   · subcolecciones: employees, expenses, trips, supervisors
+ *   · codes/{código} de cada empleado
+ *   · companyCodes/{código de empresa}
+ *   · supervisorLinks de los supervisores invitados + sus cuentas Auth
+ *   · la cuenta Auth del supervisor dueño  ← lo que libera el correo
+ *   · el documento companies/{companyId}
+ */
+const ADMIN_EMAILS = [
+  "lenin1995p@icloud.com",
+  "leninp@sachallakta.com",
+  "lenin1995p@gmail.com",
+];
+
+// Borra todos los documentos de una colección en lotes (evita timeouts).
+async function deleteCollection(ref, batchSize = 300) {
+  let deleted = 0;
+  while (true) {
+    const snap = await ref.limit(batchSize).get();
+    if (snap.empty) break;
+    const batch = admin.firestore().batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    deleted += snap.size;
+    if (snap.size < batchSize) break;
+  }
+  return deleted;
+}
+
+exports.adminDeleteCompany = onRequest(
+  { region: "us-central1", timeoutSeconds: 300, memory: "512MiB" },
+  async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ error: "Método no permitido" }); return; }
+
+    try {
+      // 1) Solo un superadmin autenticado puede llamar aquí.
+      const authz = req.headers.authorization || "";
+      const m = authz.match(/^Bearer (.+)$/);
+      if (!m) { res.status(401).json({ error: "No autenticado" }); return; }
+      let decoded;
+      try { decoded = await admin.auth().verifyIdToken(m[1]); }
+      catch (e) { res.status(401).json({ error: "Token inválido" }); return; }
+      const callerEmail = (decoded.email || "").toLowerCase();
+      if (!ADMIN_EMAILS.map((e) => e.toLowerCase()).includes(callerEmail)) {
+        res.status(403).json({ error: "No autorizado" }); return;
+      }
+
+      const companyId = (req.body && req.body.companyId) || null;
+      if (!companyId) { res.status(400).json({ error: "Falta companyId" }); return; }
+
+      // Protección: nunca borrar la cuenta con la que estás administrando ahora
+      // mismo (te dejaría fuera del panel de superadmin).
+      if (companyId === decoded.uid) {
+        res.status(400).json({
+          error: "No puedes eliminar la empresa de la cuenta con la que estás conectado. Entra con otra cuenta de administrador.",
+        });
+        return;
+      }
+
+      const db = admin.firestore();
+      const companyRef = db.collection("companies").doc(companyId);
+      const companySnap = await companyRef.get();
+      if (!companySnap.exists) { res.status(404).json({ error: "Empresa no encontrada" }); return; }
+      const company = companySnap.data() || {};
+      const report = { employees: 0, expenses: 0, trips: 0, codes: 0, supervisors: 0, authDeleted: [] };
+
+      // 2) Códigos de acceso de los empleados (colección raíz 'codes').
+      const empsSnap = await companyRef.collection("employees").get();
+      for (const d of empsSnap.docs) {
+        const code = (d.data() || {}).code;
+        if (code) {
+          try { await db.collection("codes").doc(code).delete(); report.codes++; } catch (e) {}
+        }
+      }
+
+      // 3) Subcolecciones de la empresa.
+      report.employees = await deleteCollection(companyRef.collection("employees"));
+      report.expenses  = await deleteCollection(companyRef.collection("expenses"));
+      report.trips     = await deleteCollection(companyRef.collection("trips"));
+      try { await deleteCollection(companyRef.collection("supervisors")); } catch (e) {}
+
+      // 4) Código de empresa (para unirse).
+      if (company.companyCode) {
+        try { await db.collection("companyCodes").doc(company.companyCode).delete(); } catch (e) {}
+      }
+
+      // 5) Supervisores invitados: su vínculo y su cuenta Auth.
+      try {
+        const links = await db.collection("supervisorLinks").where("companyId", "==", companyId).get();
+        for (const l of links.docs) {
+          const supUid = l.id;
+          try { await l.ref.delete(); report.supervisors++; } catch (e) {}
+          if (supUid !== companyId) {
+            try {
+              const u = await admin.auth().getUser(supUid);
+              await admin.auth().deleteUser(supUid);
+              report.authDeleted.push(u.email || supUid);
+            } catch (e) { /* la cuenta ya no existe */ }
+          }
+        }
+      } catch (e) { logger.warn("supervisorLinks:", e.message); }
+
+      // 6) La cuenta del supervisor dueño. El id del documento de empresa ES su uid,
+      //    así que borrarla libera el correo para poder registrarse de nuevo.
+      try {
+        const owner = await admin.auth().getUser(companyId);
+        await admin.auth().deleteUser(companyId);
+        report.authDeleted.push(owner.email || companyId);
+      } catch (e) {
+        logger.warn("No se pudo borrar la cuenta del dueño:", e.message);
+      }
+
+      // 7) Finalmente, el documento de la empresa.
+      await companyRef.delete();
+
+      logger.info(`Empresa ${companyId} (${company.company || "?"}) eliminada por ${callerEmail}.`, report);
+      res.json({ ok: true, ...report });
+    } catch (err) {
+      logger.error("adminDeleteCompany error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
