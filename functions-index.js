@@ -7,6 +7,7 @@
  */
 
 const { onRequest } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
@@ -17,6 +18,7 @@ admin.initializeApp();
 // Secretos (se configuran con: firebase functions:secrets:set NOMBRE)
 const STRIPE_SECRET_KEY = defineSecret("STRIPE_SECRET_KEY");
 const STRIPE_WEBHOOK_SECRET = defineSecret("STRIPE_WEBHOOK_SECRET");
+const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 
 // Respaldo: monto (en centavos) -> plan, por si el client_reference_id no trae el plan.
 function planFromAmount(amount) {
@@ -419,6 +421,111 @@ exports.ocrReceipt = onRequest(
     } catch (err) {
       logger.error("ocrReceipt error:", err);
       res.status(500).json({ error: "Error interno" });
+    }
+  }
+);
+
+/**
+ * ═══════════════════════════════════════════════════════════════════
+ * CORREO DE BIENVENIDA (Resend)
+ * ═══════════════════════════════════════════════════════════════════
+ * Se dispara solo cuando se crea companies/{companyId} en Firestore.
+ * Al ser un trigger de servidor, es confiable aunque el usuario cierre
+ * la pestaña justo después de registrarse.
+ */
+const FROM_EMAIL = "Sacha Llakta Viáticos <viaticos@mail.sachallakta.com>";
+const APP_SUP_URL = "https://viaticos.sachallakta.com/sacha-llakta-supervisor.html";
+
+function esc(s){
+  return String(s==null?"":s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
+}
+
+// Envía un correo vía la API REST de Resend (sin SDK, para no agregar dependencias).
+async function sendEmail({ to, subject, html, replyTo }) {
+  const body = {
+    from: FROM_EMAIL,
+    to: Array.isArray(to) ? to : [to],
+    subject,
+    html,
+  };
+  if (replyTo) body.reply_to = replyTo;
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${RESEND_API_KEY.value()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(`Resend ${resp.status}: ${JSON.stringify(data).slice(0, 300)}`);
+  }
+  return data;
+}
+
+function welcomeHtml({ company, name, code }) {
+  const codeBlock = code
+    ? `<p style="margin:0 0 8px;color:#94a3b8;font-size:13px;letter-spacing:.5px">CÓDIGO DE TU EMPRESA</p>
+       <div style="font-family:ui-monospace,Menlo,monospace;font-size:22px;font-weight:700;color:#e3a94a;background:#0f1629;border:1px solid #1f2d45;border-radius:10px;padding:14px 18px;text-align:center;letter-spacing:2px">${esc(code)}</div>
+       <p style="margin:12px 0 0;color:#94a3b8;font-size:13px;line-height:1.6">Comparte este código con tus supervisores para que se unan a la empresa. Guárdalo en un lugar seguro.</p>`
+    : "";
+  return `<!doctype html><html><body style="margin:0;background:#0a0f1e;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+    <div style="max-width:560px;margin:0 auto;padding:32px 20px">
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="font-size:13px;letter-spacing:3px;color:#e3a94a;font-weight:700">SACHA LLAKTA</div>
+        <div style="font-size:12px;letter-spacing:2px;color:#64748b">VIÁTICOS</div>
+      </div>
+      <div style="background:#111827;border:1px solid #1f2d45;border-radius:16px;padding:28px 24px">
+        <h1 style="margin:0 0 12px;color:#f1f5f9;font-size:22px">¡Bienvenido, ${esc(name || "")}! 👋</h1>
+        <p style="margin:0 0 20px;color:#cbd5e1;font-size:15px;line-height:1.65">
+          Tu empresa <b style="color:#f1f5f9">${esc(company || "")}</b> ya está registrada en Sacha Llakta Viáticos.
+          Desde tu panel puedes agregar empleados, asignar viáticos y llevar el control de cada viaje.
+        </p>
+        ${codeBlock}
+        <div style="text-align:center;margin:26px 0 8px">
+          <a href="${APP_SUP_URL}" style="display:inline-block;background:#e3a94a;color:#0a0f1e;font-weight:700;font-size:15px;text-decoration:none;padding:13px 28px;border-radius:10px">Abrir mi panel</a>
+        </div>
+      </div>
+      <p style="text-align:center;color:#475569;font-size:12px;line-height:1.6;margin-top:22px">
+        Recibiste este correo porque creaste una cuenta en Sacha Llakta Viáticos.<br>
+        ¿Preguntas? Responde a este correo.
+      </p>
+    </div>
+  </body></html>`;
+}
+
+exports.sendWelcomeEmail = onDocumentCreated(
+  { document: "companies/{companyId}", secrets: [RESEND_API_KEY], region: "us-central1" },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const d = snap.data() || {};
+    const to = d.supervisorEmail;
+    if (!to) { logger.warn("Empresa sin supervisorEmail; no se envía bienvenida."); return; }
+
+    // El código puede reservarse un instante después de crear el doc; damos margen.
+    let code = d.companyCode || null;
+    if (!code) {
+      await new Promise(r => setTimeout(r, 4000));
+      try {
+        const fresh = await admin.firestore().collection("companies").doc(event.params.companyId).get();
+        code = (fresh.data() || {}).companyCode || null;
+      } catch (e) {}
+    }
+
+    try {
+      await sendEmail({
+        to,
+        replyTo: "leninp@sachallakta.com",
+        subject: `Bienvenido a Sacha Llakta Viáticos — ${d.company || ""}`.trim(),
+        html: welcomeHtml({ company: d.company, name: d.supervisorName, code }),
+      });
+      logger.info(`Bienvenida enviada a ${to} (${d.company || "?"}).`);
+    } catch (err) {
+      logger.error("Error enviando bienvenida:", err.message);
     }
   }
 );
