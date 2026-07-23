@@ -1657,7 +1657,7 @@ function renderReports(){
           <button class="report-group-head" onclick="toggleTrip('${tripKey}')" style="padding:10px 12px">
             <div class="rg-left">
               <span class="rg-arrow ${topen?'open':''}">▶</span>
-              <span class="rg-name" style="font-size:14px">${isOut?'💵':'🧳'} ${isOut?(es?'Gastos fuera de viaje':'Out-of-trip expenses'):tg.label}</span>
+              <span class="rg-name" style="font-size:14px">${isOut?'💵':'🧳'} ${isOut?(es?'Gastos fuera de viaje':'Out-of-trip expenses'):tg.label}${(!isOut&&tg.trip&&tg.trip.destination)?`<span style="display:block;font-size:11.5px;color:var(--muted);font-weight:500;margin-top:2px">📍 ${esc(tg.trip.destination)}</span>`:''}</span>
               ${statusBadge}
             </div>
             <div class="rg-right">
@@ -1942,6 +1942,11 @@ function supervisorStartTrip(id,name){
       <div class="field-label">${es?'Viáticos asignados (USD)':'Assigned per-diem (USD)'}</div>
       <input class="input" id="start-trip-amount" type="number" inputmode="decimal" value="${cur}" autocomplete="off">
     </div>
+    <div class="field">
+      <div class="field-label">${es?'Destino (opcional)':'Destination (optional)'}</div>
+      <input class="input" id="start-trip-dest" type="text" maxlength="60" autocomplete="off" placeholder="${es?'Ej: Hutchinson, KS · Cliente ACME':'E.g. Hutchinson, KS · ACME Corp'}">
+      <div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.45">${es?'Ciudad y/o empresa que va a visitar. Aparecerá en los reportes.':'City and/or company they will visit. It will appear in reports.'}</div>
+    </div>
     ${leftoverHtml}
     <div id="start-trip-err" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none"></div>
     <div class="btn-row">
@@ -1964,7 +1969,9 @@ async function confirmSupervisorStart(id,leftover){
   if(chk&&chk.checked&&lo>0){ val=Math.round((val+lo)*100)/100; added=true; }
   try{
     const tripId='trip_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
-    const cmd={type:'start',amount:val,ts:Date.now(),tripId};
+    const destEl=document.getElementById('start-trip-dest');
+    const destination=destEl?(destEl.value||'').trim().slice(0,60):'';
+    const cmd={type:'start',amount:val,ts:Date.now(),tripId,destination};
     await FB.updateDoc(FB.doc(FB.db,'companies',companyId,'employees',id),{
       assignedAmount:val, tripActive:true, supervisorCommand:cmd, lastLeftover:0, currentTripId:tripId, lastTripId:null
     });
@@ -1972,7 +1979,7 @@ async function confirmSupervisorStart(id,leftover){
     try{
       await FB.setDoc(FB.doc(FB.db,'companies',companyId,'trips',tripId),{
         tripId, employeeId:id, employeeName:emp.name, company:companyData.company||'',
-        assignedAmount:val, status:'active', startedAt:FB.serverTimestamp(), note:''
+        assignedAmount:val, destination, status:'active', startedAt:FB.serverTimestamp(), note:''
       },{merge:true});
     }catch(e){}
     if(emp.code){ try{ await FB.updateDoc(FB.doc(FB.db,'codes',emp.code),{assignedAmount:val}); }catch(e){} }

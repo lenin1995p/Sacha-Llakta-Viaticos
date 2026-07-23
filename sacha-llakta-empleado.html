@@ -306,6 +306,14 @@ textarea.input{resize:none;min-height:70px}
   </div>
 </header>
 
+<!-- Aviso: la cuenta de la empresa no está activa (trial vencido / plan cancelado).
+     No bloquea el registro de gastos: el empleado no debe perder sus recibos por
+     algo que solo el supervisor puede resolver. -->
+<div id="plan-banner" style="display:none;background:rgba(239,68,68,.12);border-bottom:1px solid rgba(239,68,68,.35);padding:11px 16px;text-align:center">
+  <div style="font-size:13px;font-weight:700;color:#fca5a5;margin-bottom:2px" id="plan-banner-title">⚠️ Cuenta de empresa inactiva</div>
+  <div style="font-size:12px;color:#94a3b8;line-height:1.5" id="plan-banner-sub">Sigue registrando tus gastos con normalidad. Avísale a tu supervisor para que reactive la cuenta.</div>
+</div>
+
 <!-- ══ SCREEN: GASTOS ══ -->
 <div class="screen active" id="screen-gastos">
   <div class="page" style="padding-top:10px">
@@ -940,6 +948,7 @@ async function createTripDoc(tripId){
       employeeName:S.employee,
       company:S.company||'',
       assignedAmount:S.initialBalance||0,
+      destination:S.tripDestination||'',
       status:'active',
       startedAt:FB.serverTimestamp(),
       note:''
@@ -1100,6 +1109,43 @@ async function syncLeftover(amount){
 let unsubWatchdog=null;
 let unsubEmpDoc=null;
 let unsubExpenses=null;
+let unsubCompany=null;
+
+// ═══ ESTADO DEL PLAN DE LA EMPRESA ═══
+// Espejo de la lógica del panel de supervisor. Si la empresa no tiene acceso
+// (prueba vencida, plan cancelado o sin elegir), mostramos un aviso — pero NO
+// bloqueamos nada: el empleado no puede resolverlo y no debe perder sus gastos.
+const TRIAL_DAYS_EMP=14;
+function companyBlocked(d){
+  if(!d) return false;
+  if(d.vip===true) return false;
+  const plan=(d.plan||'pending');
+  if(plan==='pending'||plan==='expired'||plan==='cancelled') return true;
+  if(plan==='trial'){
+    const total=(typeof d.courtesyDays==='number'&&d.courtesyDays>0)?d.courtesyDays:TRIAL_DAYS_EMP;
+    let start=null;
+    if(d.planStart&&d.planStart.toDate) start=d.planStart.toDate();
+    if(!start) return false;               // sin fecha aún: dar el beneficio de la duda
+    const elapsed=Math.floor((Date.now()-start.getTime())/86400000);
+    return (total-elapsed)<=0;
+  }
+  return false;                            // basic / pro / enterprise = activo
+}
+let planBlockedState=false;
+function renderPlanBanner(blocked){
+  planBlockedState=!!blocked;
+  const el=document.getElementById('plan-banner');
+  if(!el) return;
+  if(!blocked){ el.style.display='none'; return; }
+  const es=lang==='es';
+  document.getElementById('plan-banner-title').textContent=es
+    ? '⚠️ Cuenta de empresa inactiva'
+    : '⚠️ Company account inactive';
+  document.getElementById('plan-banner-sub').textContent=es
+    ? 'Sigue registrando tus gastos con normalidad. Avísale a tu supervisor para que reactive la cuenta.'
+    : 'Keep logging your expenses as usual. Let your supervisor know so they can reactivate the account.';
+  el.style.display='block';
+}
 let watchdogGrace=true;      // ignore first code snapshot right after linking
 let lastCommandTs=0;         // last supervisor command we've already applied
 
@@ -1134,7 +1180,15 @@ function startWatchdog(){
     },(err)=>{ console.warn('watchdog emp error',err); });
   }
 
-  // 3) Watch THIS employee's expenses in the cloud → detect supervisor deletions
+  // 3) Watch the company doc → estado del plan (aviso, no bloqueo).
+  //    Si las reglas de Firestore no permiten leerlo, el error se ignora y
+  //    simplemente no se muestra el aviso: la app sigue funcionando igual.
+  unsubCompany=FB.onSnapshot(FB.doc(FB.db,'companies',S.companyId),(snap)=>{
+    if(!snap.exists()) return;
+    try{ renderPlanBanner(companyBlocked(snap.data())); }catch(e){}
+  },(err)=>{ console.warn('watchdog company (opcional):',err.message); });
+
+  // 4) Watch THIS employee's expenses in the cloud → detect supervisor deletions
   if(S.employeeId){
     let expSeeded=false;
     const expQ=FB.query(
@@ -1199,6 +1253,8 @@ function stopWatchdog(){
   if(unsubWatchdog){ unsubWatchdog(); unsubWatchdog=null; }
   if(unsubEmpDoc){ unsubEmpDoc(); unsubEmpDoc=null; }
   if(unsubExpenses){ unsubExpenses(); unsubExpenses=null; }
+  if(unsubCompany){ unsubCompany(); unsubCompany=null; }
+  renderPlanBanner(false);
 }
 
 // Apply changes the supervisor made (amount, start/end commands)
@@ -1250,6 +1306,7 @@ function applySupervisorDoc(d){
       // trip somehow already looks active locally (covers end+start races and
       // leftover roll-over, so the summed amount is never lost).
       if(typeof cmd.amount==='number'&&cmd.amount>0) S.initialBalance=cmd.amount;
+      if(typeof cmd.destination==='string') S.tripDestination=cmd.destination;
       if(!S.tripActive){
         applyRemoteStartTrip(cmd.tripId||null);
         toast(lang==='es'?'Tu supervisor inició tu viaje':'Your supervisor started your trip');
@@ -1354,12 +1411,14 @@ function applyRemoteEndTrip(){
     totalSpent,balance:S.initialBalance-totalSpent,
     tripStart:S.tripStart,tripEnd:S.tripEnd,
     tripId:S.currentTripId||null,
+    destination:S.tripDestination||'',
     gastos:[...S.gastos],
     categories:[...S.categories]
   });
   const endedTripId=S.currentTripId;
   const endedInitial=S.initialBalance; // capturar antes de resetear
   S.tripActive=false;S.tripStart=null;S.tripEnd=null;S.gastos=[];S.currentTripId=null;
+  S.tripDestination='';
   syncLeftover(leftoverNow);
   if(endedTripId) closeTripDoc(endedTripId,totalSpent,leftoverNow,endedInitial);
 }
@@ -1784,10 +1843,12 @@ function render(){
 function renderHeader(){
   document.getElementById('hdr-company').textContent=S.company||'—';
   setSyncState(syncState);
+  renderPlanBanner(planBlockedState);
   document.getElementById('hdr-employee').textContent=S.employee||'—';
   const lbl=document.getElementById('hdr-trip-label');
   if(S.tripActive){
-    lbl.textContent=t('viaje-activo');lbl.style.color='var(--green)';
+    lbl.textContent=S.tripDestination ? (t('viaje-activo')+' · '+S.tripDestination) : t('viaje-activo');
+    lbl.style.color='var(--green)';
     document.getElementById('trip-pill').className='trip-pill pill-active pill-active-anim';
     document.getElementById('trip-pill').textContent=t('trip-active');
   } else {
@@ -2147,6 +2208,11 @@ function showStartTripModal(){
         <input class="input" id="start-amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="${(S.lastAssigned||0).toFixed(2)}" autocomplete="off" oninput="updateStartBreakdown()">
       </div>
     </div>
+    <div style="margin-top:14px">
+      <div style="font-size:11px;letter-spacing:.5px;color:var(--dim);font-weight:800;text-transform:uppercase;margin-bottom:6px">${lang==='es'?'Destino (opcional)':'Destination (optional)'}</div>
+      <input class="input" id="start-destination" type="text" maxlength="60" autocomplete="off" placeholder="${lang==='es'?'Ej: Hutchinson, KS · Cliente ACME':'E.g. Hutchinson, KS · ACME Corp'}" value="${esc(S.lastDestination||'')}">
+      <div style="font-size:11.5px;color:var(--dim);margin-top:5px;line-height:1.45">${lang==='es'?'Ciudad y/o empresa que vas a visitar. Aparecerá en los reportes.':'City and/or company you are visiting. It will appear in reports.'}</div>
+    </div>
     ${(S.wallet||0)>0?`
     <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-top:12px;font-size:13px;color:var(--text);line-height:1.4">
       <input type="checkbox" id="start-add-wallet" style="margin-top:2px;width:17px;height:17px;accent-color:var(--green)" onchange="updateStartBreakdown()">
@@ -2206,6 +2272,9 @@ function confirmStartTrip(){
     S.wallet=0;
   }
   S.initialBalance=total;
+  const destEl=document.getElementById('start-destination');
+  S.tripDestination=destEl?(destEl.value||'').trim().slice(0,60):'';
+  if(S.tripDestination) S.lastDestination=S.tripDestination;
   startTrip();
   if(usedWallet>0 && S.linked) syncWallet();
 }
@@ -2275,6 +2344,7 @@ function endTrip(){
     totalSpent,balance:S.initialBalance-totalSpent,
     tripStart:S.tripStart,tripEnd:S.tripEnd,
     tripId:S.currentTripId||null,
+    destination:S.tripDestination||'',
     gastos:[...S.gastos],
     categories:[...S.categories]
   });
@@ -2284,6 +2354,7 @@ function endTrip(){
   const leftover=Math.max(0,Math.round((S.initialBalance-totalSpent)*100)/100);
   S.wallet=Math.round(((S.wallet||0)+leftover)*100)/100;
   S.tripActive=false;S.tripStart=null;S.tripEnd=null;S.gastos=[];S.currentTripId=null;
+  S.tripDestination='';
   S.initialBalance=0;   // no active budget until a new trip is started
   save();render();
   if(S.linked){ runSyncOp(()=>syncTripStatus()); runSyncOp(()=>syncLeftover(leftover)); runSyncOp(()=>syncWallet()); if(endedTripId) runSyncOp(()=>closeTripDoc(endedTripId,totalSpent,leftover,endedInitial)); }
@@ -2395,7 +2466,7 @@ function renderHistory(){
         <div>
           <div class="trip-card-company">${esc(trip.company)}</div>
           <div class="trip-card-emp">${esc(trip.employee)}</div>
-          <div class="trip-card-dates">${trip.tripStart||'—'} → ${trip.tripEnd||'—'}</div>
+          <div class="trip-card-dates">${trip.destination?'📍 '+esc(trip.destination)+'<br>':''}${trip.tripStart||'—'} → ${trip.tripEnd||'—'}</div>
         </div>
         <div class="badge badge-green">✓ ${lang==='es'?'Archivado':'Archived'}</div>
       </div>
