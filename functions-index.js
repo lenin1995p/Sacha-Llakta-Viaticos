@@ -466,32 +466,102 @@ async function sendEmail({ to, subject, html, replyTo }) {
   return data;
 }
 
+// Bloque de código de empresa (el código es el mismo en ambos idiomas).
+function codeCard(code, labelTxt, helpTxt) {
+  if (!code) return "";
+  return `<p style="margin:0 0 8px;color:#94a3b8;font-size:12px;letter-spacing:1px">${labelTxt}</p>
+    <div style="font-family:ui-monospace,Menlo,monospace;font-size:22px;font-weight:700;color:#e3a94a;background:#0f1629;border:1px solid #1f2d45;border-radius:10px;padding:14px 18px;text-align:center;letter-spacing:2px">${esc(code)}</div>
+    <p style="margin:10px 0 0;color:#94a3b8;font-size:13px;line-height:1.6">${helpTxt}</p>`;
+}
+
+function ctaButton(label) {
+  return `<div style="text-align:center;margin:24px 0 4px">
+    <a href="${APP_SUP_URL}" style="display:inline-block;background:#e3a94a;color:#0a0f1e;font-weight:700;font-size:15px;text-decoration:none;padding:13px 28px;border-radius:10px">${label}</a>
+  </div>`;
+}
+
+// Tres primeros pasos — lo justo para saber por dónde empezar, sin manual.
+function stepsBlock(title, steps) {
+  const items = steps.map((s, i) => `
+    <tr>
+      <td style="width:26px;vertical-align:top;padding:0 0 10px">
+        <div style="width:20px;height:20px;border-radius:50%;background:#1f2d45;color:#e3a94a;font-size:11px;font-weight:700;text-align:center;line-height:20px">${i + 1}</div>
+      </td>
+      <td style="vertical-align:top;padding:0 0 10px;color:#cbd5e1;font-size:14px;line-height:1.55">${s}</td>
+    </tr>`).join("");
+  return `
+    <p style="margin:22px 0 10px;color:#94a3b8;font-size:12px;letter-spacing:1px">${title}</p>
+    <table cellpadding="0" cellspacing="0" border="0" style="width:100%">${items}</table>`;
+}
+
+// Nota personal del fundador: genera confianza y las respuestas mejoran la
+// entrega de los correos futuros (Gmail las lee como señal de correo deseado).
+function personalNote(text) {
+  return `<p style="margin:20px 0 0;padding-top:16px;border-top:1px solid #1f2d45;color:#94a3b8;font-size:13.5px;line-height:1.6">${text}</p>`;
+}
+
+/**
+ * Correo bilingüe: español primero, luego inglés, separados por un divisor.
+ * Así sirve para clientes hispanohablantes y angloparlantes sin tener que
+ * adivinar el idioma de cada empresa.
+ */
 function welcomeHtml({ company, name, code }) {
-  const codeBlock = code
-    ? `<p style="margin:0 0 8px;color:#94a3b8;font-size:13px;letter-spacing:.5px">CÓDIGO DE TU EMPRESA</p>
-       <div style="font-family:ui-monospace,Menlo,monospace;font-size:22px;font-weight:700;color:#e3a94a;background:#0f1629;border:1px solid #1f2d45;border-radius:10px;padding:14px 18px;text-align:center;letter-spacing:2px">${esc(code)}</div>
-       <p style="margin:12px 0 0;color:#94a3b8;font-size:13px;line-height:1.6">Comparte este código con tus supervisores para que se unan a la empresa. Guárdalo en un lugar seguro.</p>`
-    : "";
+  const c = esc(company || "");
+  const n = esc(name || "");
+
+  const es = `
+    <h1 style="margin:0 0 12px;color:#f1f5f9;font-size:22px">¡Bienvenido, ${n}! 👋</h1>
+    <p style="margin:0 0 18px;color:#cbd5e1;font-size:15px;line-height:1.65">
+      Tu empresa <b style="color:#f1f5f9">${c}</b> ya está registrada en Sacha Llakta Viáticos.
+      Desde tu panel puedes agregar empleados, asignar viáticos y llevar el control de cada viaje.
+    </p>
+    ${codeCard(code, "CÓDIGO DE TU EMPRESA",
+      "Comparte este código con tus supervisores para que se unan a la empresa. Guárdalo en un lugar seguro.")}
+    ${stepsBlock("PRIMEROS PASOS", [
+      "Agrega a tu primer empleado. Recibirá un código para entrar a su app.",
+      "Asígnale sus viáticos e inicia su viaje.",
+      "Cada gasto que registre lo verás al instante, con la foto del recibo.",
+    ])}
+    ${ctaButton("Abrir mi panel")}
+    ${personalNote("Soy Lenin, el creador de Sacha Llakta. Si algo no te funciona o quieres que agregue una función, responde a este correo — lo leo yo.")}`;
+
+  const en = `
+    <h1 style="margin:0 0 12px;color:#f1f5f9;font-size:22px">Welcome, ${n}! 👋</h1>
+    <p style="margin:0 0 18px;color:#cbd5e1;font-size:15px;line-height:1.65">
+      Your company <b style="color:#f1f5f9">${c}</b> is now registered with Sacha Llakta Per Diem.
+      From your dashboard you can add employees, assign per diem and track every trip.
+    </p>
+    ${codeCard(code, "YOUR COMPANY CODE",
+      "Share this code with your supervisors so they can join the company. Keep it somewhere safe.")}
+    ${stepsBlock("FIRST STEPS", [
+      "Add your first employee. They will get a code to open their app.",
+      "Assign their per diem and start their trip.",
+      "Every expense they log shows up instantly, with the receipt photo.",
+    ])}
+    ${ctaButton("Open my dashboard")}
+    ${personalNote("I'm Lenin, the creator of Sacha Llakta. If something doesn't work or you'd like a feature added, just reply to this email — it comes straight to me.")}`;
+
+  const divider = `
+    <div style="text-align:center;margin:30px 0 24px">
+      <div style="border-top:1px solid #1f2d45;margin-bottom:14px;font-size:0;line-height:0">&nbsp;</div>
+      <span style="color:#475569;font-size:11px;letter-spacing:2px;font-weight:700">ENGLISH</span>
+    </div>`;
+
   return `<!doctype html><html><body style="margin:0;background:#0a0f1e;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
     <div style="max-width:560px;margin:0 auto;padding:32px 20px">
       <div style="text-align:center;margin-bottom:28px">
         <div style="font-size:13px;letter-spacing:3px;color:#e3a94a;font-weight:700">SACHA LLAKTA</div>
-        <div style="font-size:12px;letter-spacing:2px;color:#64748b">VIÁTICOS</div>
+        <div style="font-size:12px;letter-spacing:2px;color:#64748b">VIÁTICOS · PER DIEM</div>
       </div>
       <div style="background:#111827;border:1px solid #1f2d45;border-radius:16px;padding:28px 24px">
-        <h1 style="margin:0 0 12px;color:#f1f5f9;font-size:22px">¡Bienvenido, ${esc(name || "")}! 👋</h1>
-        <p style="margin:0 0 20px;color:#cbd5e1;font-size:15px;line-height:1.65">
-          Tu empresa <b style="color:#f1f5f9">${esc(company || "")}</b> ya está registrada en Sacha Llakta Viáticos.
-          Desde tu panel puedes agregar empleados, asignar viáticos y llevar el control de cada viaje.
-        </p>
-        ${codeBlock}
-        <div style="text-align:center;margin:26px 0 8px">
-          <a href="${APP_SUP_URL}" style="display:inline-block;background:#e3a94a;color:#0a0f1e;font-weight:700;font-size:15px;text-decoration:none;padding:13px 28px;border-radius:10px">Abrir mi panel</a>
-        </div>
+        ${es}
+        ${divider}
+        ${en}
       </div>
       <p style="text-align:center;color:#475569;font-size:12px;line-height:1.6;margin-top:22px">
         Recibiste este correo porque creaste una cuenta en Sacha Llakta Viáticos.<br>
-        ¿Preguntas? Responde a este correo.
+        You received this email because you created an account with Sacha Llakta.<br>
+        ¿Preguntas? Responde a este correo. · Questions? Just reply.
       </p>
     </div>
   </body></html>`;
@@ -520,7 +590,7 @@ exports.sendWelcomeEmail = onDocumentCreated(
       await sendEmail({
         to,
         replyTo: "leninp@sachallakta.com",
-        subject: `Bienvenido a Sacha Llakta Viáticos — ${d.company || ""}`.trim(),
+        subject: `Bienvenido / Welcome — Sacha Llakta${d.company ? " · " + d.company : ""}`,
         html: welcomeHtml({ company: d.company, name: d.supervisorName, code }),
       });
       logger.info(`Bienvenida enviada a ${to} (${d.company || "?"}).`);
